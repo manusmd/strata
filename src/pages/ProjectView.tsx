@@ -6,6 +6,7 @@ import { DbMap } from "../map/DbMap";
 import { ArchMap } from "../map/ArchMap";
 import type { WorkspacePackage } from "../map/archModel";
 import { AskPanel } from "../ask/AskPanel";
+import { focusOn, type Focus } from "../map/focus";
 import { LENSES, Lens } from "../routes";
 
 export type Progress = Record<string, ScanProgress>;
@@ -132,17 +133,32 @@ type Props = {
   zoomRequest: { level: ZoomLevel; n: number } | null;
   askOpen: boolean;
   onCloseAsk: () => void;
+  /** Reports the loaded graph and workspace packages, for the ⌘K index. */
+  onData: (graph: Graph | null, workspace: WorkspacePackage[]) => void;
+  /** Jump requests from ⌘K: select something in one of the lenses. */
+  jump: { lens: Lens; id: string; n: number } | null;
+  /** A question to send to Ask Strata (from ⌘K). */
+  askRequest: { q: string; n: number } | null;
 };
 
-export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, onLevel, zoomRequest, askOpen, onCloseAsk }: Props) {
+export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, onLevel, zoomRequest, askOpen, onCloseAsk, onData, jump, askRequest }: Props) {
   const [graph, setGraph] = useState<Graph | null>(null);
   // Where to land when jumping between lenses (a file in Code, a table in Database).
-  const [focus, setFocus] = useState<{ code: string | null; db: string | null; arch: string | null }>({ code: null, db: null, arch: null });
+  const [focus, setFocus] = useState<{ code: Focus | null; db: Focus | null; arch: Focus | null }>({ code: null, db: null, arch: null });
   // Packages every repo in the workspace provides, to trace "missing" imports to a repo.
   const [workspace, setWorkspace] = useState<WorkspacePackage[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Reload the graph whenever any repo finishes a scan.
   const scanKey = project.repos.map((r) => `${r.id}@${r.lastScanAt ?? 0}`).join(",");
+
+  useEffect(() => onData(graph, workspace), [graph, workspace, onData]);
+
+  useEffect(() => {
+    if (!jump) return;
+    setFocus((f) => ({ ...f, [jump.lens]: focusOn(jump.id) }));
+    setLens(jump.lens);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump]);
 
   useEffect(() => {
     api.workspacePackages().then((w) => setWorkspace(w ?? [])).catch(() => setWorkspace([]));
@@ -247,11 +263,11 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           graph={graph}
           workspace={workspace}
           onOpenFile={(id) => {
-            setFocus((f) => ({ ...f, code: id }));
+            setFocus((f) => ({ ...f, code: id ? focusOn(id) : null }));
             setLens("code");
           }}
           onOpenTable={(id) => {
-            setFocus((f) => ({ ...f, db: id }));
+            setFocus((f) => ({ ...f, db: id ? focusOn(id) : null }));
             setLens("db");
           }}
           onAddRepo={onAddRepoPath}
@@ -263,7 +279,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           graph={graph}
           focus={focus.db}
           onOpenFile={(id) => {
-            setFocus((f) => ({ ...f, code: id }));
+            setFocus((f) => ({ ...f, code: id ? focusOn(id) : null }));
             setLens("code");
           }}
         />
@@ -275,7 +291,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           zoomRequest={zoomRequest}
           focus={focus.code}
           onOpenTable={(id) => {
-            setFocus((f) => ({ ...f, db: id }));
+            setFocus((f) => ({ ...f, db: id ? focusOn(id) : null }));
             setLens("db");
           }}
         />
@@ -294,10 +310,11 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           graph={graph}
           workspace={workspace}
           lens={lens}
+          request={askRequest}
           onClose={onCloseAsk}
           onOpen={(ref) => {
             const key = ref.kind === "file" ? "code" : ref.kind === "table" ? "db" : "arch";
-            setFocus((f) => ({ ...f, [key]: ref.id }));
+            setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
             setLens(key);
           }}
         />

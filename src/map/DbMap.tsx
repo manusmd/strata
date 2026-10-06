@@ -9,6 +9,7 @@ import { LabelNode, type Highlight } from "./nodes";
 import { DbInspector } from "./DbInspector";
 import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
+import type { Focus } from "./focus";
 
 const nodeTypes = { table: TableNode, ghostTable: GhostTableNode, dbRepo: DbRepoNode, dbGroup: DbGroupNode, label: LabelNode };
 
@@ -16,7 +17,7 @@ type Props = {
   project: Project;
   graph: Graph;
   /** Table to select and center, e.g. when coming from the Code view. */
-  focus: string | null;
+  focus: Focus | null;
   onOpenFile: (fileId: string) => void;
 };
 
@@ -112,7 +113,8 @@ function buildFlow(model: DbModel, layout: Layout, expanded: Set<string>, projec
   return { nodes, edges };
 }
 
-function DbMapInner({ project, graph, focus, onOpenFile }: Props) {
+function DbMapInner({ project, graph, focus: focusReq, onOpenFile }: Props) {
+  const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
   const model = useMemo(() => buildDbModel(graph, project.repos), [graph, project.repos]);
@@ -140,7 +142,8 @@ function DbMapInner({ project, graph, focus, onOpenFile }: Props) {
     if (!focus || !fitted.current) return;
     setSel(focus);
     rf.fitView({ nodes: [{ id: focus }], maxZoom: 1, duration: 400 });
-  }, [focus, rf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq, rf]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSel(null);

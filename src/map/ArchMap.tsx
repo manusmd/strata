@@ -8,6 +8,7 @@ import type { Highlight } from "./nodes";
 import { ArchInspector } from "./ArchInspector";
 import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
+import type { Focus } from "./focus";
 
 const NODE_W = 248;
 const NODE_H = 96;
@@ -81,10 +82,11 @@ type Props = {
   onOpenTable: (tableId: string | null) => void;
   onAddRepo: (path: string) => void;
   /** Component to select and center, e.g. from an Ask Strata answer. */
-  focus: string | null;
+  focus: Focus | null;
 };
 
-function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus }: Props) {
+function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq }: Props) {
+  const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
   const model = useMemo(() => buildArchModel(graph, project.repos, workspace), [graph, project.repos, workspace]);
@@ -111,7 +113,8 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     if (!focus) return;
     setSel(focus);
     if (fitted.current) rf.fitView({ nodes: [{ id: focus }], maxZoom: 1, duration: 400 });
-  }, [focus, rf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq, rf]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSel(null);

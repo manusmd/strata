@@ -14,7 +14,11 @@ type Props = {
   lens: Lens;
   onOpen: (ref: Ref) => void;
   onClose: () => void;
+  /** A question to send right away (from ⌘K). */
+  request: { q: string; n: number } | null;
 };
+
+let lastSentRequest = 0;
 
 const MODELS = [
   { id: "", label: "Default model" },
@@ -23,7 +27,7 @@ const MODELS = [
   { id: "haiku", label: "Haiku · fastest" },
 ];
 
-export function AskPanel({ project, graph, workspace, lens, onOpen, onClose }: Props) {
+export function AskPanel({ project, graph, workspace, lens, onOpen, onClose, request }: Props) {
   const conv = useConversation(project.id);
   const { usage, status } = useAskMeta();
   const [input, setInput] = useState("");
@@ -101,6 +105,15 @@ export function AskPanel({ project, graph, workspace, lens, onOpen, onClose }: P
     setInput("");
     askStore.ask(project.id, question, buildContext(project, graph, workspace, lens), project.repos.map((r) => r.path), model || null);
   };
+
+  useEffect(() => {
+    // Module-level, so reopening the panel doesn't resend an old ⌘K question.
+    if (request && lastSentRequest !== request.n) {
+      lastSentRequest = request.n;
+      send(request.q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
 
   const ideas = useMemo(() => suggestions(project, graph, workspace), [project, graph, workspace]);
   const unavailable = status && !status.available;

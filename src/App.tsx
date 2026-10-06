@@ -8,6 +8,11 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { CreateProject } from "./pages/CreateProject";
 import { ProjectToolbar, ProjectView, type Progress } from "./pages/ProjectView";
 import type { ZoomLevel } from "./map/CodeMap";
+import type { Graph } from "./api";
+import type { WorkspacePackage } from "./map/archModel";
+import { Palette } from "./palette/Palette";
+import type { PaletteItem } from "./palette/index";
+import type { Lens } from "./routes";
 import { Settings } from "./pages/Settings";
 
 type Theme = "dark" | "light";
@@ -49,13 +54,22 @@ export default function App() {
   const [level, setLevel] = useState<ZoomLevel>("File");
   const [zoomRequest, setZoomRequest] = useState<{ level: ZoomLevel; n: number } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [projectData, setProjectData] = useState<{ graph: Graph | null; workspace: WorkspacePackage[] }>({ graph: null, workspace: [] });
+  const [jump, setJump] = useState<{ lens: Lens; id: string; n: number } | null>(null);
+  const [askRequest, setAskRequest] = useState<{ q: string; n: number } | null>(null);
+  const onProjectData = useCallback((graph: Graph | null, workspace: WorkspacePackage[]) => setProjectData({ graph, workspace }), []);
 
-  // ⌘J toggles Ask Strata, like in the design.
+  // ⌘J toggles Ask Strata, ⌘K the command palette — like in the design.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey && e.key.toLowerCase() === "j") {
         e.preventDefault();
         setAskOpen((o) => !o);
+      }
+      if (e.metaKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -119,6 +133,30 @@ export default function App() {
     [act],
   );
 
+  const pick = (item: PaletteItem, query: string) => {
+    setPaletteOpen(false);
+    const projectId = route.page === "project" || route.page === "settings" ? route.id : null;
+    const lensNow = route.page === "project" ? route.lens : "code";
+    if (item.target && projectId) {
+      if (route.page !== "project") setRoute({ page: "project", id: projectId, lens: item.target.lens });
+      setJump((j) => ({ ...item.target!, n: (j?.n ?? 0) + 1 }));
+      return;
+    }
+    const a = item.action ?? "";
+    if (a.startsWith("lens:") && projectId) setRoute({ page: "project", id: projectId, lens: a.slice(5) as Lens });
+    else if (a === "rescan" && projectId) act(() => api.scanProject(projectId));
+    else if (a === "settings" && projectId) setRoute({ page: "settings", id: projectId });
+    else if (a.startsWith("project:")) setRoute({ page: "project", id: a.slice(8), lens: "code" });
+    else if (a === "new") setRoute({ page: "create" });
+    else if (a === "home") setRoute({ page: "projects" });
+    else if (a === "theme") toggleTheme();
+    else if (a === "ask" && projectId) {
+      if (route.page !== "project") setRoute({ page: "project", id: projectId, lens: lensNow });
+      setAskOpen(true);
+      setAskRequest((r) => ({ q: query, n: (r?.n ?? 0) + 1 }));
+    }
+  };
+
   if (projects === null) return <div className="main" style={{ height: "100%" }} />;
 
   const current = route.page === "project" || route.page === "settings" ? projects.find((p) => p.id === route.id) : undefined;
@@ -179,6 +217,9 @@ export default function App() {
           ) : (
             <div className="spacer" data-tauri-drag-region />
           )}
+          <button className="search-pill" onClick={() => setPaletteOpen(true)} title="Search (⌘K)">
+            <span>⌕</span> Search… <kbd>⌘K</kbd>
+          </button>
           <button className="icon-btn" style={{ width: 28, height: 28, fontSize: 14 }} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>
             ◐
           </button>
@@ -230,6 +271,9 @@ export default function App() {
             zoomRequest={zoomRequest}
             askOpen={askOpen}
             onCloseAsk={() => setAskOpen(false)}
+            onData={onProjectData}
+            jump={jump}
+            askRequest={askRequest}
           />
         )}
 
@@ -244,6 +288,16 @@ export default function App() {
           />
         )}
       </main>
+      {paletteOpen && (
+        <Palette
+          projects={projects}
+          current={current ?? null}
+          graph={current ? projectData.graph : null}
+          workspace={projectData.workspace}
+          onPick={pick}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </div>
   );
 }

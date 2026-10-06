@@ -16,6 +16,7 @@ import { CLUSTER_W, COLLAPSED_ROWS, HEADER_H, PAD, ROW_H, layoutCodeModel, visib
 import { nodeTypes, type Highlight } from "./nodes";
 import { Inspector, type Selection } from "./Inspector";
 import { LEVEL_ZOOM, ZoomWatcher, type ZoomLevel } from "./zoom";
+import type { Focus } from "./focus";
 
 export type { ZoomLevel } from "./zoom";
 
@@ -25,8 +26,8 @@ type Props = {
   onLevel: (l: ZoomLevel) => void;
   /** Bumped by the toolbar to jump to a zoom level. */
   zoomRequest: { level: ZoomLevel; n: number } | null;
-  /** File to select and center, e.g. when coming from the Database view. */
-  focus: string | null;
+  /** File, folder or group to select and center, e.g. when coming from another view or ⌘K. */
+  focus: Focus | null;
   onOpenTable: (tableId: string) => void;
 };
 
@@ -214,7 +215,8 @@ function buildFlow(model: CodeModel, layout: Layout, expanded: Set<string>, proj
   return { nodes, edges };
 }
 
-function CodeMapInner({ project, graph, onLevel, zoomRequest, focus, onOpenTable }: Props) {
+function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, onOpenTable }: Props) {
+  const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
   const model = useMemo(() => buildCodeModel(graph, project.repos), [graph, project.repos]);
@@ -226,7 +228,9 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus, onOpenTable
   };
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([focusCluster(focus)].filter(Boolean) as string[]));
   const [layout, setLayout] = useState<Layout | null>(null);
-  const [sel, setSel] = useState<Selection | null>(focus && model.files.has(focus) ? { kind: "file", id: focus } : null);
+  const [sel, setSel] = useState<Selection | null>(
+    focus && model.files.has(focus) ? { kind: "file", id: focus } : focus && model.clusters.has(focus) ? { kind: "cluster", id: focus } : focus?.includes(":group:") ? { kind: "group", id: focus } : null,
+  );
   const firstLayout = useRef(true);
   const pendingFocus = useRef<string | null>(focus);
 
@@ -241,7 +245,7 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus, onOpenTable
   useEffect(() => {
     if (!layout) return;
     const target = pendingFocus.current;
-    if (target && model.files.has(target)) {
+    if (target && (model.files.has(target) || model.clusters.has(target) || target.includes(":group:"))) {
       const duration = firstLayout.current ? 0 : 400;
       pendingFocus.current = null;
       firstLayout.current = false;
@@ -252,9 +256,15 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus, onOpenTable
     }
   }, [layout, rf, model]);
 
-  // Jumping here again (another file) while the map is already open.
+  // Jumping here again while the map is already open.
   useEffect(() => {
-    if (!focus || !model.files.has(focus)) return;
+    if (!focus) return;
+    if (model.clusters.has(focus) || focus.includes(":group:")) {
+      setSel({ kind: model.clusters.has(focus) ? "cluster" : "group", id: focus });
+      if (layout) rf.fitView({ nodes: [{ id: focus }], maxZoom: 1, duration: 400 });
+      return;
+    }
+    if (!model.files.has(focus)) return;
     setSel({ kind: "file", id: focus });
     const c = focusCluster(focus);
     pendingFocus.current = focus;
@@ -264,7 +274,7 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus, onOpenTable
       rf.fitView({ nodes: [{ id: focus }], maxZoom: 1.1, minZoom: 0.8, duration: 400 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus]);
+  }, [focusReq]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSel(null);
