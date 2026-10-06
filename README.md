@@ -31,6 +31,14 @@ cd src-tauri && STRATA_SCAN=~/dev/some-repo cargo test --release real_repo -- --
 cd src-tauri && STRATA_SCAN=~/dev/some-repo STRATA_FIXTURE=../public/fixture.json cargo test --release real_repo -- --ignored --nocapture
 ```
 
+## App icon
+
+The icon is drawn in `assets/app-icon.svg` (same geometry as `StrataLogo.tsx`). Regenerate all sizes with:
+
+```bash
+pnpm tauri icon assets/app-icon.svg && rm -rf src-tauri/icons/android src-tauri/icons/ios
+```
+
 ## Layout
 
 - `src-tauri/src/db.rs` — SQLite store: projects, repos (a repo can belong to several projects), and the node/edge graph the scanner fills.
