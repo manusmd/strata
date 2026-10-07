@@ -9,7 +9,7 @@ export const OPERATOR = {
   street: "Hardtstr. 27",
   city: "78467 Konstanz",
   country: { de: "Deutschland", en: "Germany" },
-  email: "info@afterhive.de",
+  email: "info@manu-web.de",
   phone: "+49 172 3758429",
 } as const;
 
