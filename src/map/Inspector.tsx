@@ -1,5 +1,7 @@
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
-import type { Project } from "../api";
+import type { Graph, Project } from "../api";
+import { SummarySection } from "../summary/SummarySection";
+import { fileSubject, folderSubject } from "../summary/subjects";
 import { clusterLabel, type CodeModel, type FileInfo } from "./model";
 
 export type Selection = { kind: "repo" | "group" | "cluster" | "file" | "ghost"; id: string };
@@ -7,6 +9,7 @@ export type Selection = { kind: "repo" | "group" | "cluster" | "file" | "ghost";
 type Props = {
   model: CodeModel;
   project: Project;
+  graph: Graph;
   sel: Selection;
   onSelect: (s: Selection) => void;
   onOpenTable: (tableId: string) => void;
@@ -54,7 +57,7 @@ const absPath = (project: Project, repoId: string, rel: string) => {
   return repo ? (rel ? `${repo.path}/${rel}` : repo.path) : rel;
 };
 
-export function Inspector({ model, project, sel, onSelect, onOpenTable, onClose }: Props) {
+export function Inspector({ model, project, graph, sel, onSelect, onOpenTable, onClose }: Props) {
   const repoName = (id: string) => project.repos.find((r) => r.id === id)?.name ?? "repo";
   let body: React.ReactNode = null;
   let actions: React.ReactNode = null;
@@ -75,6 +78,7 @@ export function Inspector({ model, project, sel, onSelect, onOpenTable, onClose 
           <span className="chip">{f.imports.length} imports</span>
           <span className="chip">{f.importedBy.length} importers</span>
         </div>
+        <SummarySection subject={() => fileSubject(project, model, graph, f.id)} />
         {f.parseError && <div className="insp-warn">Tree-sitter hit syntax it couldn’t fully parse. Symbols may be incomplete.</div>}
         <Section title={`Symbols · ${f.symbols.length}${exported ? ` (${exported} exported)` : ""}`}>
           {f.symbols.length === 0 && <div className="faint insp-empty">No top-level declarations.</div>}
@@ -155,6 +159,7 @@ export function Inspector({ model, project, sel, onSelect, onOpenTable, onClose 
     body = (
       <>
         <Header mono="DIR" title={clusterLabel(c)} meta={`${repoName(c.repoId)} · ${c.files.length} files · ${lines.toLocaleString()} lines`} kind="Folder" color="#8B5CF6" />
+        <SummarySection subject={() => folderSubject(project, model, graph, c.id)} />
         <Section title={`Uses · ${outs.length} folders`}>
           {outs.map((e) => folderRow(e.target, e.count))}
           {model.ghostEdges.filter((e) => e.source === c.id).map((e) => folderRow(e.target, e.count))}
@@ -207,6 +212,7 @@ export function Inspector({ model, project, sel, onSelect, onOpenTable, onClose 
     body = (
       <>
         <Header mono="DIR" title={dir} meta={`${repoName(repoId)} · ${files} files · ${lines.toLocaleString()} lines`} kind="Folder" color="#8B5CF6" />
+        <SummarySection subject={() => folderSubject(project, model, graph, sel.id)} />
         <Section title={`Uses · ${outs.size} folders outside`}>
           {[...outs].sort((a, b) => b[1] - a[1]).slice(0, 15).map(row)}
           {outs.size === 0 && <div className="faint insp-empty">Self-contained.</div>}

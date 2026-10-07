@@ -1,53 +1,108 @@
+<div align="center">
+
+<img src="assets/app-icon.svg" width="112" alt="Strata logo" />
+
 # Strata
 
-A visual atlas for your codebase: connect the repos of a project and explore them as one zoomable map with three lenses — Code, Architecture and Database.
+**A visual atlas for your codebase.**<br />
+Connect the repos of a project and explore them as one zoomable map — code, architecture and database — with an AI that reads the code with you.
 
-Built with Tauri 2 (Rust) + React + TypeScript.
+[![Latest release](https://img.shields.io/github/v/release/manusmd/strata?label=download&color=8B5CF6)](https://github.com/manusmd/strata/releases/latest)
+![macOS](https://img.shields.io/badge/macOS-11%2B-111?logo=apple)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![MIT License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-## Develop
+[**Download for macOS**](https://github.com/manusmd/strata/releases/latest) · [Install guide](#install) · [Features](#features) · [Development](docs/DEVELOPMENT.md)
+
+<br />
+
+<img src="docs/screenshots/architecture.png" alt="Strata's Architecture view: services, a database, an external API and a missing package, with the inspector open on the api service" />
+
+</div>
+
+## Why Strata
+
+Real systems don't live in one folder. A web app, an API, a worker, shared packages, a database schema and a handful of external services — spread over several repos. Strata scans them together and draws **one map you can zoom through**: from the whole system down to modules, files and single functions.
+
+- 🗺️ **Three lenses on the same project** — Code, Architecture and Database.
+- 🔍 **Semantic zoom** — the map shows systems when you're far out and files and symbols when you zoom in.
+- 🧩 **Finds what's missing** — packages and services your code uses that aren't part of the project, traced back to the repo that provides them.
+- ✦ **Ask Strata** — chat with Claude about your code; answers link straight into the map and can draw diagrams.
+- 🔒 **Local first** — scanning happens on your Mac. Nothing is uploaded; AI features use your own Claude Code login.
+
+## Features
+
+### Architecture
+
+Apps, services, workers, libraries, databases and external APIs — detected from `package.json`, `docker-compose`, environment variables, ports and the code itself. Click anything to see what it talks to, which tables it reads and writes, and its entry points.
+
+### Code
+
+<img src="docs/screenshots/code.png" alt="The Code view of Strata's own source: folders and files as cards, with the imports of CanvasView.tsx highlighted" />
+
+Folders and files as a zoomable map, imports as lines, symbols at the deepest level. Understands tsconfig path aliases and monorepo workspace packages. Select a file to see what it imports and who imports it.
+
+### Database
+
+<img src="docs/screenshots/database.png" alt="The Database view: an ER diagram of eight tables with primary and foreign keys, and the inspector of a table" />
+
+An ER diagram built from **Prisma**, **ZenStack**, **Drizzle** or plain **SQL migrations** — and, for every table, the code that reads and writes it.
+
+### Ask Strata & canvases
+
+<img src="docs/screenshots/chat.png" alt="A project chat: the question how to improve the architecture, answered with a proposal canvas" />
+
+Ask anything about the project. Claude starts from Strata's map, reads the actual code, and answers with clickable files, tables and services. When a picture helps, it draws a **canvas** — a diagram of a proposal with new, changed and removed parts that you can open full screen, click through, and compare side by side with today's architecture.
+
+<img src="docs/screenshots/canvas.png" alt="A proposal canvas full screen: a new payment-service selected, with its connections in the inspector" />
+
+### And also
+
+- **AI summaries** of any component, file or table, on click (off until you turn them on per project).
+- **AI sections** — let Claude group a large map into domains like “Checkout”, “Members” or “Auth”.
+- **⌘K** search across files, symbols, tables and services; **⌘J** opens Ask Strata anywhere.
+- **Project logos**, light & dark mode, multi-repo and monorepo aware.
+- **Automatic updates** — new versions install from inside the app.
+
+## Install
+
+1. [Download the latest `.dmg`](https://github.com/manusmd/strata/releases/latest) and drag **Strata** into **Applications**.
+2. Open it. macOS will say it can't verify the app — Strata isn't notarized by Apple (it's a free, open-source app without an Apple developer certificate).
+3. Open **System Settings → Privacy & Security**, scroll down to “Strata was blocked…”, click **Open Anyway** and confirm.
+
+That's it — from now on it opens normally, and updates install from inside the app without asking again.
+
+<details>
+<summary>macOS says “Strata is damaged and can't be opened”?</summary>
+
+That's the download quarantine, not actual damage. Remove it once in Terminal:
+
+```bash
+xattr -cr /Applications/Strata.app
+```
+
+</details>
+
+### Requirements
+
+- macOS 11 or later on Apple Silicon.
+- For the AI features: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (`claude` once in a terminal). Maps, search and everything else work without it.
+- Repos in TypeScript or JavaScript (more languages are planned).
+
+## Privacy
+
+Strata runs entirely on your Mac and stores its data in a local SQLite database. It never uploads your code. AI features call the Claude Code CLI on your machine, with your own login and read-only tools; only what you ask (and the code Claude reads to answer it) goes to Anthropic, exactly as when you use Claude Code yourself.
+
+## Development
 
 ```bash
 pnpm install
-pnpm tauri dev      # native app
-pnpm dev            # UI only, in a browser, with mock data (src/devMock.ts)
-cd src-tauri && cargo test
+pnpm tauri dev   # the native app
+pnpm dev         # the UI in a browser, with demo data
 ```
 
-Real Claude CLI round trip (uses a few cents of your subscription):
+Architecture, tests, fixtures and the release process are described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-```bash
-cd src-tauri && cargo test ask:: -- --ignored --nocapture
-```
+## License
 
-Scanner on a real repo (prints stats and timing):
-
-```bash
-cd src-tauri && STRATA_SCAN=~/dev/some-repo cargo test --release real_repo -- --ignored --nocapture
-```
-
-`http://localhost:1420/?fixture` renders `public/fixture.json` (gitignored) instead of the sample graph. Create one from any repo with:
-
-```bash
-cd src-tauri && STRATA_SCAN=~/dev/some-repo STRATA_FIXTURE=../public/fixture.json cargo test --release real_repo -- --ignored --nocapture
-```
-
-## App icon
-
-The icon is drawn in `assets/app-icon.svg` (same geometry as `StrataLogo.tsx`). Regenerate all sizes with:
-
-```bash
-pnpm tauri icon assets/app-icon.svg && rm -rf src-tauri/icons/android src-tauri/icons/ios
-```
-
-## Layout
-
-- `src-tauri/src/db.rs` — SQLite store: projects, repos (a repo can belong to several projects), and the node/edge graph the scanner fills.
-- `src-tauri/src/scanner.rs` — Tree-sitter scanner: files, symbols and imports for TS/TSX/JS, resolving relative paths, tsconfig aliases and monorepo workspace packages.
-- `src-tauri/src/lib.rs` — Tauri commands, background scans with progress events, macOS vibrancy.
-- `src-tauri/src/schema.rs` — database schemas from Prisma/ZenStack (`.prisma`, `.zmodel`), Drizzle tables and SQL migrations (replayed in order), plus where code reads/writes tables (Prisma client, Drizzle query builder, raw SQL strings).
-- `src-tauri/src/arch.rs` — architecture signals: units (every package.json), docker-compose services (ports, depends_on, env links), database engines, and per-file hints (env vars, localhost ports, external hosts, listen ports).
-- `src-tauri/src/ask.rs` — Ask Strata: runs the user's own Claude Code CLI (`claude -p … --output-format stream-json`), newest installation wins, read-only (`--tools Read Grep Glob`, `dontAsk`, `--restricted` when supported), repos added with `--add-dir`, follow-ups via `--resume`; events are streamed to the UI.
-- `src/ask/` — the panel (⌘J): project context for Claude (`context.ts`), conversation store, a small Markdown renderer that turns `strata:file|table|node/…` links and known paths into chips that jump to the right lens.
-- `src/palette/` — ⌘K: fuzzy search over files, symbols, tables, components and folders of the open project (`index.ts`, `fuzzy.ts`), plus actions (switch view or project, rescan, settings, theme) and “Ask Strata: …” (⌘↵).
-- `src/map/` — Code lens: graph model, ELK layout (folder hierarchy; flow for small folders, packing for big ones), React Flow nodes with semantic zoom, inspector. Database lens in `db*.ts(x)`: ER diagram grouped by schema file, hub tables kept out of the layout, crow's-foot relations, jumps between tables and the code that uses them. Architecture lens in `arch*.ts(x)`: classifies units (app / service / worker / library …), maps SDKs and hosts to external services, links units by imports, DB access, localhost ports, compose config and `*_API_URL` variables (marked as inferred), and traces missing packages to repos elsewhere in the workspace.
-- `src/` — React UI (sidebar, projects overview, create-project flow, project view, settings). Design tokens in `src/styles.css`.
+[MIT](LICENSE) © Manuel Schmid

@@ -25,6 +25,9 @@ function Thumb({ project }: { project: Project }) {
   if (project.repos.length === 0) {
     return <div className="faint" style={{ fontSize: 12.5 }}>No repos yet</div>;
   }
+  if (project.logo) {
+    return <ProjectTile name={project.name} color={project.color} logo={project.logo} size={64} />;
+  }
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", maxWidth: 220 }}>
       {project.repos.slice(0, 6).map((r) => (
@@ -67,14 +70,14 @@ export function ProjectsPage({ projects, navigate }: { projects: Project[]; navi
               key={p.id}
               className="card"
               style={{ overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column" }}
-              onClick={() => navigate({ page: "project", id: p.id, lens: "code" })}
+              onClick={() => navigate({ page: "project", id: p.id, lens: "home" })}
             >
               <div className="dots" style={{ height: 130, display: "grid", placeItems: "center", borderBottom: "1px solid var(--line)" }}>
                 <Thumb project={p} />
               </div>
               <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <ProjectTile name={p.name} color={p.color} size={24} />
+                  <ProjectTile name={p.name} color={p.color} logo={p.logo} size={24} />
                   <div style={{ fontSize: 14.5, fontWeight: 600 }}>{p.name}</div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

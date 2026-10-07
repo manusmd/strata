@@ -32,13 +32,22 @@ export type Graph = { nodes: GraphNode[]; edges: GraphEdge[]; packages: PackageU
 export type ScanProgress = { repoId: string; done: number; total: number };
 export type ScanFinished = { repoId: string; error: string | null };
 
+export type AiMode = "off" | "click" | "auto";
+
 export type Project = {
   id: string;
   name: string;
   color: string;
   createdAt: number;
+  aiMode: AiMode;
+  aiModel: string;
+  /** Best logo found in the project's repos (data URL), if any. */
+  logo?: string | null;
   repos: Repo[];
 };
+
+export type Summary = { nodeId: string; hash: string; text: string; model: string; createdAt: number };
+export type SummaryRequest = { projectId: string; nodeId: string; hash: string; prompt: string; files: { path: string; label: string }[]; model: string };
 
 export const PROJECT_COLORS = ["#8B5CF6", "#6366F1", "#14B8A6", "#F59E0B", "#E879A0", "#9B9A97"];
 
@@ -54,6 +63,11 @@ export const api = {
   workspacePackages: () => invoke<import("./map/archModel").WorkspacePackage[]>("workspace_packages"),
   removeRepo: (projectId: string, repoId: string) => invoke<void>("remove_repo", { projectId, repoId }),
   currentUser: () => invoke<string>("current_user"),
+  setProjectAi: (id: string, mode: AiMode, model: string) => invoke<void>("set_project_ai", { id, mode, model }),
+  projectSummaries: (projectId: string) => invoke<Summary[]>("project_summaries", { projectId }),
+  clearSummaries: (projectId: string) => invoke<number>("clear_summaries", { projectId }),
+  summarize: (request: SummaryRequest) => invoke<string>("summarize", { request }),
+  organize: (projectId: string, lens: string, hash: string, prompt: string, model: string) => invoke<string>("organize", { projectId, lens, hash, prompt, model }),
 };
 
 /** Opens the native folder picker. Returns the chosen folders (possibly none). */

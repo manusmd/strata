@@ -17,6 +17,7 @@ import { nodeTypes, type Highlight } from "./nodes";
 import { Inspector, type Selection } from "./Inspector";
 import { LEVEL_ZOOM, ZoomWatcher, type ZoomLevel } from "./zoom";
 import type { Focus } from "./focus";
+import type { Plan } from "../sections/plan";
 
 export type { ZoomLevel } from "./zoom";
 
@@ -29,7 +30,30 @@ type Props = {
   /** File, folder or group to select and center, e.g. when coming from another view or ⌘K. */
   focus: Focus | null;
   onOpenTable: (tableId: string) => void;
+  /** AI sections: group folders by feature area across repos. */
+  plan?: Plan | null;
 };
+
+/** Rebuilds the map's top level from AI sections: each section is a frame of folders from any repo. */
+function sectioned(m: CodeModel, plan: Plan, project: Project): CodeModel {
+  const multi = project.repos.length > 1;
+  const repoName = (id: string) => project.repos.find((r) => r.id === id)?.name ?? "";
+  const repos = plan.sections
+    .map((sec, i) => {
+      const clusters = sec.members.map((id) => m.clusters.get(id)).filter((c): c is NonNullable<typeof c> => !!c);
+      return {
+        id: `sec:${i}`,
+        name: sec.name,
+        clusters,
+        items: clusters.map((c) => ({ kind: "cluster" as const, cluster: c, label: `${multi ? `${repoName(c.repoId)}/` : ""}${c.dir || "."}` })),
+        fileCount: clusters.reduce((n, c) => n + c.files.length, 0),
+      };
+    })
+    .filter((r) => r.clusters.length > 0);
+  const parentOf = new Map<string, string>();
+  for (const r of repos) for (const c of r.clusters) parentOf.set(c.id, r.id);
+  return { ...m, repos, parentOf };
+}
 
 
 function ZoomTo({ request }: { request: Props["zoomRequest"] }) {
@@ -215,11 +239,14 @@ function buildFlow(model: CodeModel, layout: Layout, expanded: Set<string>, proj
   return { nodes, edges };
 }
 
-function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, onOpenTable }: Props) {
+function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, onOpenTable, plan = null }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
-  const model = useMemo(() => buildCodeModel(graph, project.repos), [graph, project.repos]);
+  const model = useMemo(() => {
+    const m = buildCodeModel(graph, project.repos);
+    return plan ? sectioned(m, plan, project) : m;
+  }, [graph, project, plan]);
   // A focused file deep inside a big folder needs that folder expanded to be visible.
   const focusCluster = (id: string | null) => {
     const f = id ? model.files.get(id) : undefined;
@@ -234,9 +261,18 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, o
   const firstLayout = useRef(true);
   const pendingFocus = useRef<string | null>(focus);
 
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const lastPlan = useRef(plan);
   useEffect(() => {
     let cancelled = false;
-    layoutCodeModel(model, expanded).then((l) => !cancelled && setLayout(l));
+    layoutCodeModel(model, expanded)
+      .then((l) => {
+        if (cancelled) return;
+        setLayout(l);
+        if (!firstLayout.current && lastPlan.current !== plan) requestAnimationFrame(() => rf.fitView({ padding: 0.08, maxZoom: 1, duration: 300 }));
+        lastPlan.current = plan;
+      })
+      .catch((e) => !cancelled && setLayoutError(String(e)));
     return () => {
       cancelled = true;
     };
@@ -313,14 +349,14 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, o
         <ZoomWatcher container={container} onLevel={onLevel} />
         <ZoomTo request={zoomRequest} />
       </ReactFlow>
-      {!layout && <div className="map-loading">Laying out the map…</div>}
+      {!layout && <div className="map-loading">{layoutError ? `Couldn’t lay out the map: ${layoutError}` : "Laying out the map…"}</div>}
       <div className="map-legend">
         <span><i className="lg-line" /> imports</span>
         <span><i className="lg-line out" /> selected → uses</span>
         <span><i className="lg-line in" /> used by → selected</span>
         <span><i className="lg-line ghost" /> missing</span>
       </div>
-      {sel && <Inspector model={model} project={project} sel={sel} onSelect={setSel} onOpenTable={onOpenTable} onClose={() => setSel(null)} />}
+      {sel && <Inspector model={model} project={project} graph={graph} sel={sel} onSelect={setSel} onOpenTable={onOpenTable} onClose={() => setSel(null)} />}
     </div>
   );
 }

@@ -56,6 +56,8 @@ pub struct ScanResult {
     pub stats: ScanStats,
     /// `name` from the repo's root package.json, used to link repos together.
     pub package_name: Option<String>,
+    /// The most logo-like image in the repo (repo-relative) and its score.
+    pub logo: Option<(String, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +71,8 @@ pub struct Symbol {
 
 #[derive(Debug, Default)]
 pub struct ParsedFile {
+    /// FNV-1a of the file's bytes, so AI summaries know when they're outdated.
+    pub hash: u64,
     pub imports: Vec<String>,
     pub drizzle: Vec<DrizzleTable>,
     pub db_refs: Vec<DbRef>,
@@ -161,6 +165,16 @@ fn collect_imports(node: Node, src: &[u8], out: &mut Vec<String>) {
     }
 }
 
+/// FNV-1a 64: fast, stable across runs and Rust versions (unlike `DefaultHasher`).
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 pub fn parse_source(parser: &mut Parser, lang: &Language, source: &str) -> ParsedFile {
     let src = source.as_bytes();
     if parser.set_language(lang).is_err() {
@@ -169,7 +183,7 @@ pub fn parse_source(parser: &mut Parser, lang: &Language, source: &str) -> Parse
     let Some(tree) = parser.parse(src, None) else { return ParsedFile::default() };
     let root = tree.root_node();
 
-    let mut parsed = ParsedFile { lines: source.lines().count(), has_errors: root.has_error(), ..Default::default() };
+    let mut parsed = ParsedFile { hash: fnv1a(src), lines: source.lines().count(), has_errors: root.has_error(), ..Default::default() };
     collect_imports(root, src, &mut parsed.imports);
     parsed.drizzle = schema::find_drizzle_tables(root, src);
     schema::collect_db_refs(root, src, &mut parsed.db_refs);
@@ -472,6 +486,7 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
     let mut schema_files = Vec::new();
     let mut compose_files = Vec::new();
     let mut has_pnpm_workspace = false;
+    let mut logo: Option<(String, i32)> = None;
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
@@ -497,6 +512,12 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
         }
         if name == "pnpm-workspace.yaml" {
             has_pnpm_workspace = true;
+        }
+        if let Some(score) = entry.metadata().ok().filter(|m| m.is_file()).and_then(|m| crate::logo::score(rel, m.len())) {
+            if logo.as_ref().map(|(_, best)| score > *best).unwrap_or(true) {
+                logo = Some((rel_string(rel), score));
+            }
+            continue;
         }
         if name.ends_with(".prisma") || name.ends_with(".zmodel") || name.ends_with(".sql") || name.starts_with("drizzle.config.") {
             schema_files.push(rel.to_path_buf());
@@ -716,7 +737,7 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
             name: rel.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
             path: Some(rel_string(rel)),
             parent_id: Some(parent_id(rel)),
-            meta: json!({ "lines": file.lines, "symbols": file.symbols.len(), "parseError": file.has_errors }),
+            meta: json!({ "lines": file.lines, "symbols": file.symbols.len(), "parseError": file.has_errors, "hash": format!("{:016x}", file.hash) }),
         });
     }
 
@@ -814,6 +835,7 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
         edges: edges.into_iter().collect(),
         stats,
         package_name: root_manifest.and_then(|m| m.get("name")).and_then(Value::as_str).map(String::from),
+        logo,
     })
 }
 
@@ -962,6 +984,7 @@ mod real_repo {
         let t = std::time::Instant::now();
         let r = super::scan_repo("r", std::path::Path::new(&path), |_, _| {}).unwrap();
         println!("{path}: {:?} nodes={} edges={} in {:?}", r.stats, r.nodes.len(), r.edges.len(), t.elapsed());
+        println!("logo: {:?}", r.logo);
         let undeclared: Vec<_> = r.nodes.iter().filter(|n| n.kind == "package" && n.meta["declared"] == false).map(|n| n.name.as_str()).collect();
         println!("undeclared: {undeclared:?}");
         let tables: Vec<_> = r.nodes.iter().filter(|n| n.kind == "table").map(|n| format!("{}({}c,{})", n.name, n.meta["columns"].as_array().map(|a| a.len()).unwrap_or(0), n.meta["origin"].as_str().unwrap_or(""))).collect();

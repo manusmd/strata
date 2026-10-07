@@ -10,7 +10,7 @@ const LIMIT = 24_000; // characters; keeps the appended system prompt small
  * from the map instead of exploring blind — plus the link syntax the panel
  * turns into clickable references.
  */
-export function buildContext(project: Project, graph: Graph | null, workspace: WorkspacePackage[], lens: Lens): string {
+export function buildContext(project: Project, graph: Graph | null, workspace: WorkspacePackage[], lens: Lens, summaries: Map<string, string> = new Map()): string {
   const lines: string[] = [];
   lines.push(
     `You are "Ask Strata", answering questions about the software project "${project.name}" inside Strata, a code map app.`,
@@ -35,7 +35,8 @@ export function buildContext(project: Project, graph: Graph | null, workspace: W
     lines.push("", "## Architecture (derived from the code by Strata)");
     for (const n of arch.nodes) {
       const where = n.unit ? ` in ${repoName(n.repoId)}/${n.unit.dir || ""}` : "";
-      lines.push(`- ${n.name} [${n.kind}] ${n.detail}${where}`);
+      const about = summaries.get(n.id);
+      lines.push(`- ${n.name} [${n.kind}] ${n.detail}${where}${about ? ` — ${about}` : ""}`);
     }
     if (arch.edges.length) {
       lines.push("", "Connections:");
@@ -49,7 +50,8 @@ export function buildContext(project: Project, graph: Graph | null, workspace: W
         lines.push(`${r.name}:`);
         for (const t of r.tables) {
           const fks = t.columns.filter((c) => c.fk).map((c) => `${c.name}→${c.fk!.table}`);
-          lines.push(`- ${t.name} (${t.columns.length} cols${fks.length ? `; ${fks.join(", ")}` : ""}) — ${t.source}`);
+          const about = summaries.get(t.id);
+          lines.push(`- ${t.name} (${t.columns.length} cols${fks.length ? `; ${fks.join(", ")}` : ""}) — ${t.source}${about ? ` — ${about}` : ""}`);
         }
       }
     }

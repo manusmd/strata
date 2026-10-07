@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Graph, Project } from "../api";
 import type { WorkspacePackage } from "../map/archModel";
 import { scoreItem } from "./fuzzy";
+import { summaryStore, useSummaries } from "../summary/store";
 import { KIND_ICON, KIND_LABEL, buildIndex, type ItemKind, type PaletteItem } from "./index";
 
 type Props = {
@@ -41,9 +42,16 @@ export function Palette({ projects, current, graph, workspace, onPick, onClose }
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
 
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
 
-  const index = useMemo(() => (current && graph ? buildIndex(current, graph, workspace) : []), [current, graph, workspace]);
+  const summaries = useSummaries(current?.id ?? "");
+  const index = useMemo(
+    () => (current && graph ? buildIndex(current, graph, workspace, summaryStore.texts(current.id)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [current, graph, workspace, summaries],
+  );
 
   const actions = useMemo<PaletteItem[]>(() => {
     const a: PaletteItem[] = [];
@@ -79,9 +87,12 @@ export function Palette({ projects, current, graph, workspace, onPick, onClose }
       ];
     }
     const scored: { item: PaletteItem; idx: number[]; score: number }[] = [];
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     for (const item of [...index, ...actions]) {
       const m = scoreItem(q, item.title, item.subtitle);
       if (m) scored.push({ item, idx: m.titleIdx, score: m.score + (item.boost ?? 0) });
+      // Summaries match by whole words only — fuzzy matching a paragraph would match anything.
+      else if (item.about && words.length && words.every((w) => w.length >= 3 && item.about!.toLowerCase().includes(w))) scored.push({ item, idx: [], score: 25 + (item.boost ?? 0) });
     }
     scored.sort((a, b) => b.score - a.score);
     const groups = new Map<ItemKind, { item: PaletteItem; idx: number[]; score: number }[]>();

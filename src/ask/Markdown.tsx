@@ -8,6 +8,8 @@ type Props = {
   /** Turns a `strata:` link, or inline code that names a known file/table, into a reference. */
   resolve: (href: string | null, label: string) => Ref | null;
   onRef: (ref: Ref) => void;
+  /** Custom rendering for fenced blocks (e.g. ```strata-canvas). `closed` is false while the block is still streaming in. */
+  renderBlock?: (lang: string, body: string, closed: boolean) => ReactNode | null;
 };
 
 const ICON: Record<Ref["kind"], string> = { file: "TS", table: "▦", node: "◆" };
@@ -57,11 +59,14 @@ export function Markdown(props: Props) {
     const line = lines[i];
     const key = `b${n++}`;
     if (line.startsWith("```")) {
+      const lang = line.slice(3).trim();
       const body: string[] = [];
       i++;
       while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
+      const closed = i < lines.length;
       i++;
-      blocks.push(<pre key={key} className="ask-pre"><code>{body.join("\n")}</code></pre>);
+      const custom = props.renderBlock?.(lang, body.join("\n"), closed);
+      blocks.push(custom ? <Fragment key={key}>{custom}</Fragment> : <pre key={key} className="ask-pre"><code>{body.join("\n")}</code></pre>);
       continue;
     }
     const h = /^(#{1,4})\s+(.*)$/.exec(line);

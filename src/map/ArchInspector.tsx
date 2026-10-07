@@ -1,5 +1,7 @@
 import type { Graph, Project } from "../api";
 import { KIND_COLOR, type ArchEdge, type ArchModel } from "./archModel";
+import { SummarySection } from "../summary/SummarySection";
+import { archSubject } from "../summary/subjects";
 
 type Props = {
   model: ArchModel;
@@ -11,6 +13,8 @@ type Props = {
   onOpenTable: (tableId: string | null) => void;
   onAddRepo: (path: string) => void;
   onClose: () => void;
+  /** Shown under the header, e.g. what a chat canvas says about this component. */
+  banner?: React.ReactNode;
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -24,7 +28,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const ENTRY = /^(main|index|server|app|cli|worker|entry)\.(m?[tj]sx?)$/;
 
-export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile, onOpenTable, onAddRepo, onClose }: Props) {
+export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile, onOpenTable, onAddRepo, onClose, banner }: Props) {
   const n = model.byId.get(id);
   if (!n) return null;
   const color = KIND_COLOR[n.kind];
@@ -201,6 +205,8 @@ export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile,
           </div>
           <span className="insp-kind">{n.kind}</span>
         </div>
+        {banner}
+        <SummarySection subject={() => archSubject(project, model, graph, id)} />
         {body}
       </div>
       {actions && <div className="insp-actions">{actions}</div>}

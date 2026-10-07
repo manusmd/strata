@@ -104,6 +104,8 @@ export async function layoutCodeModel(model: CodeModel, expanded: Set<string>): 
     topEdges.push({ id: `top|${a}>${b}`, sources: [a], targets: [b] });
   }
 
+  // Only edges whose ends are on the map (ELK rejects the whole graph otherwise).
+  const present = new Set([...model.repos.map((r) => r.id), ...model.ghosts.map((g) => g.id)]);
   const graph: ElkNode = {
     id: "root",
     layoutOptions: {
@@ -125,7 +127,7 @@ export async function layoutCodeModel(model: CodeModel, expanded: Set<string>): 
       }),
       ...model.ghosts.map((g) => ({ id: g.id, width: GHOST_W, height: GHOST_H })),
     ],
-    edges: topEdges,
+    edges: topEdges.filter((e) => present.has(e.sources[0]) && present.has(e.targets[0])),
   };
 
   const result = await elk.layout(graph);

@@ -13,6 +13,8 @@ import type { WorkspacePackage } from "./map/archModel";
 import { Palette } from "./palette/Palette";
 import type { PaletteItem } from "./palette/index";
 import type { Lens } from "./routes";
+import { UpdateCard } from "./update/UpdateCard";
+import { updateStore } from "./update/store";
 import { Settings } from "./pages/Settings";
 
 type Theme = "dark" | "light";
@@ -87,6 +89,7 @@ export default function App() {
   useEffect(() => {
     reload();
     api.currentUser().then(setUser).catch(() => {});
+    updateStore.start();
   }, [reload]);
 
   // Scans run in the backend; it reports progress and completion as events.
@@ -146,7 +149,7 @@ export default function App() {
     if (a.startsWith("lens:") && projectId) setRoute({ page: "project", id: projectId, lens: a.slice(5) as Lens });
     else if (a === "rescan" && projectId) act(() => api.scanProject(projectId));
     else if (a === "settings" && projectId) setRoute({ page: "settings", id: projectId });
-    else if (a.startsWith("project:")) setRoute({ page: "project", id: a.slice(8), lens: "code" });
+    else if (a.startsWith("project:")) setRoute({ page: "project", id: a.slice(8), lens: "home" });
     else if (a === "new") setRoute({ page: "create" });
     else if (a === "home") setRoute({ page: "projects" });
     else if (a === "theme") toggleTheme();
@@ -177,7 +180,7 @@ export default function App() {
             const id = await api.createProject(name, color, paths);
             if (paths.length) await api.scanProject(id);
             await reload();
-            setRoute({ page: "project", id, lens: "code" });
+            setRoute({ page: "project", id, lens: "home" });
           }}
         />
       </div>
@@ -241,7 +244,7 @@ export default function App() {
               const id = await api.createProject(name, color, paths);
               if (paths.length) await api.scanProject(id);
               await reload();
-              setRoute({ page: "project", id, lens: "code" });
+              setRoute({ page: "project", id, lens: "home" });
             }}
           />
         )}
@@ -274,6 +277,8 @@ export default function App() {
             onData={onProjectData}
             jump={jump}
             askRequest={askRequest}
+            onEnableAi={() => act(() => api.setProjectAi(current.id, "click", current.aiModel || "haiku"))}
+            onOpenSettings={() => setRoute({ page: "settings", id: current.id })}
           />
         )}
 
@@ -284,10 +289,12 @@ export default function App() {
             onAddRepo={() => addFolders(current.id)}
             onRemoveRepo={(repoId) => act(() => api.removeRepo(current.id, repoId))}
             onRescan={(repoId) => act(() => api.scanRepo(repoId))}
+            onSetAi={(mode, model) => act(() => api.setProjectAi(current.id, mode, model))}
             onDelete={() => act(() => api.deleteProject(current.id)).then(() => setRoute({ page: "projects" }))}
           />
         )}
       </main>
+      <UpdateCard />
       {paletteOpen && (
         <Palette
           projects={projects}

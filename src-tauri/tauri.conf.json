@@ -41,6 +41,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFENjdBNjQ3M0NBMzM3NUUKUldSZU42TThSNlpuSFl5bnNmdzQ4dHBoMUlPa2ZTZnNoZGU2dzdMMFhSbUVjTkRwN0VQK28xUjYK",
+      "endpoints": [
+        "https://github.com/manusmd/strata/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

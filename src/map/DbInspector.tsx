@@ -1,6 +1,8 @@
 import { openPath } from "@tauri-apps/plugin-opener";
 import type { Project } from "../api";
 import { ORIGIN_LABEL, type DbModel } from "./dbModel";
+import { SummarySection } from "../summary/SummarySection";
+import { tableSubject } from "../summary/subjects";
 
 type Props = {
   model: DbModel;
@@ -59,6 +61,8 @@ export function DbInspector({ model, project, id, onSelect, onOpenFile, onClose 
             {table.source.split("/").pop()}:{table.line}
           </span>
         </div>
+
+        <SummarySection subject={() => tableSubject(project, model, table.id)} />
 
         <Section title={`Used by code · ${users.size} files`}>
           {[...users].map(([fid, u]) => (

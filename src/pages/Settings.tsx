@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { PROJECT_COLORS, Project, initials, shortPath, timeAgo } from "../api";
+import { PROJECT_COLORS, Project, initials, shortPath, timeAgo, type AiMode } from "../api";
+import { summaryStore, useSummaries } from "../summary/store";
 import { ProjectTile } from "../components/ProjectTile";
 
 type Props = {
@@ -8,6 +9,7 @@ type Props = {
   onAddRepo: () => void;
   onRemoveRepo: (repoId: string) => void;
   onRescan: (repoId: string) => void;
+  onSetAi: (mode: AiMode, model: string) => void;
   onDelete: () => void;
 };
 
@@ -25,7 +27,23 @@ function Section({ title, desc, children }: { title: string; desc: string; child
   );
 }
 
-export function Settings({ project, onSave, onAddRepo, onRemoveRepo, onRescan, onDelete }: Props) {
+const AI_MODES: { id: AiMode; title: string; desc: string }[] = [
+  { id: "off", title: "Off", desc: "Nothing leaves this Mac." },
+  { id: "click", title: "On click", desc: "Write a summary when you select something." },
+  { id: "auto", title: "On click + pre-generate", desc: "Also summarize every component and table in the background." },
+];
+const AI_MODELS = [
+  { id: "haiku", label: "Haiku — fastest, lightest on your plan" },
+  { id: "sonnet", label: "Sonnet — more thorough" },
+  { id: "opus", label: "Opus — most capable, slowest" },
+];
+
+export function Settings({ project, onSave, onAddRepo, onRemoveRepo, onRescan, onSetAi, onDelete }: Props) {
+  const summaries = useSummaries(project.id);
+  const stored = Object.values(summaries).filter((e) => e.summary).length;
+  useEffect(() => {
+    summaryStore.load(project.id);
+  }, [project.id]);
   const [name, setName] = useState(project.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -44,7 +62,7 @@ export function Settings({ project, onSave, onAddRepo, onRemoveRepo, onRescan, o
     <div className="page">
       <div className="page-inner page-narrow">
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <ProjectTile name={project.name} color={project.color} size={42} />
+          <ProjectTile name={project.name} color={project.color} logo={project.logo} size={42} />
           <div>
             <h1 className="title" style={{ fontSize: 26 }}>{project.name}</h1>
             <div className="faint" style={{ fontSize: 12.5, marginTop: 2 }}>
@@ -101,6 +119,40 @@ export function Settings({ project, onSave, onAddRepo, onRemoveRepo, onRescan, o
               + Add repo to project
             </div>
           </div>
+        </Section>
+
+        <Section title="AI summaries" desc="Short explanations of files, folders, components and tables, written by Claude through your Claude Code login.">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            {AI_MODES.map((m) => (
+              <button key={m.id} className={`ai-mode ${project.aiMode === m.id ? "on" : ""}`} onClick={() => onSetAi(m.id, project.aiModel)}>
+                <span className="ai-radio" />
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{m.title}</span>
+                <span className="faint" style={{ fontSize: 12, lineHeight: 1.4 }}>{m.desc}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", alignItems: "center", gap: 14 }}>
+            <span className="muted">Model</span>
+            <select className="input" style={{ maxWidth: 320 }} value={project.aiModel} onChange={(e) => onSetAi(project.aiMode, e.target.value)}>
+              {AI_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+            <span className="muted">Stored</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="faint">{stored} {stored === 1 ? "summary" : "summaries"} · reused until the code changes</span>
+              {stored > 0 && (
+                <button className="btn small ghost" onClick={() => summaryStore.clear(project.id)}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          {project.aiMode !== "off" && (
+            <div className="faint" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              The selected item’s code and what Strata knows about it are sent to Claude. Summaries are stored only on this Mac.
+            </div>
+          )}
         </Section>
 
         <Section title="Danger zone" desc="This can’t be undone.">

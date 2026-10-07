@@ -10,6 +10,7 @@ import { DbInspector } from "./DbInspector";
 import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
 import type { Focus } from "./focus";
+import type { Plan } from "../sections/plan";
 
 const nodeTypes = { table: TableNode, ghostTable: GhostTableNode, dbRepo: DbRepoNode, dbGroup: DbGroupNode, label: LabelNode };
 
@@ -19,6 +20,8 @@ type Props = {
   /** Table to select and center, e.g. when coming from the Code view. */
   focus: Focus | null;
   onOpenFile: (fileId: string) => void;
+  /** AI sections: group tables by domain instead of by schema file. */
+  plan?: Plan | null;
 };
 
 function buildFlow(model: DbModel, layout: Layout, expanded: Set<string>, project: Project, onToggle: (id: string) => void, sel: string | null) {
@@ -113,22 +116,42 @@ function buildFlow(model: DbModel, layout: Layout, expanded: Set<string>, projec
   return { nodes, edges };
 }
 
-function DbMapInner({ project, graph, focus: focusReq, onOpenFile }: Props) {
+function DbMapInner({ project, graph, focus: focusReq, onOpenFile, plan = null }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
-  const model = useMemo(() => buildDbModel(graph, project.repos), [graph, project.repos]);
+  const model = useMemo(() => {
+    const m = buildDbModel(graph, project.repos);
+    if (!plan) return m;
+    // AI sections replace the schema-file groups, per repo.
+    for (const r of m.repos) {
+      r.groups = plan.sections
+        .map((sec, i) => ({ id: `aisec:${r.id}:${i}`, repoId: r.id, label: sec.name, tables: r.tables.filter((t) => plan.sectionOf.get(t.id) === i) }))
+        .filter((g) => g.tables.length > 0);
+    }
+    return m;
+  }, [graph, project.repos, plan]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [layout, setLayout] = useState<Layout | null>(null);
   const [sel, setSel] = useState<string | null>(focus);
   const fitted = useRef(false);
+  const lastPlan = useRef(plan);
 
   useEffect(() => {
     let cancelled = false;
-    layoutDbModel(model, expanded).then((l) => !cancelled && setLayout(l));
+    layoutDbModel(model, expanded)
+      .then((l) => {
+        if (cancelled) return;
+        setLayout(l);
+        // Switching sections on or off rearranges everything: show the whole map again.
+        if (fitted.current && lastPlan.current !== plan) requestAnimationFrame(() => rf.fitView({ padding: 0.08, maxZoom: 1, duration: 300 }));
+        lastPlan.current = plan;
+      })
+      .catch((e) => console.error("schema layout failed", e));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, expanded]);
 
   // First layout: fit everything, or center the table we were sent to.

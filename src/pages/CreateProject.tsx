@@ -140,9 +140,6 @@ export function CreateProject({ first, onCancel, onCreate }: Props) {
                 <button className="btn small" onClick={addFolders}>
                   + Local folder
                 </button>
-                <button className="btn small" disabled title="Coming soon">
-                  + GitHub repo
-                </button>
               </div>
 
               {error && <div className="error-banner">{error}</div>}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Project, Repo, ScanProgress, timeAgo } from "../api";
 import { Route } from "../routes";
 import { ProjectTile } from "./ProjectTile";
+import { VersionButton } from "../update/UpdateCard";
 import { StrataLogo } from "./StrataLogo";
 
 type Props = {
@@ -54,8 +55,8 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
           </button>
         </div>
         {projects.map((p) => (
-          <div key={p.id} className={`sb-row ${p.id === activeId ? "active" : ""}`} onClick={() => navigate({ page: "project", id: p.id, lens: "code" })}>
-            <ProjectTile name={p.name} color={p.color} />
+          <div key={p.id} className={`sb-row ${p.id === activeId ? "active" : ""}`} onClick={() => navigate({ page: "project", id: p.id, lens: "home" })}>
+            <ProjectTile name={p.name} color={p.color} logo={p.logo} />
             <span className="grow">{p.name}</span>
             <span className="count">{p.repos.length}</span>
           </div>
@@ -82,7 +83,7 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
                 const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
                 return (
                   <div key={r.id} title={r.scanError ?? r.path}>
-                    <div className="sb-row repo-row" onClick={() => navigate({ page: "project", id: active.id, lens: "code" })}>
+                    <div className="sb-row repo-row" onClick={() => navigate({ page: "project", id: active.id, lens: "home" })}>
                       <span className="repo-dot" style={{ background: dot.color, animation: dot.anim }} />
                       <span className="grow name">{r.name}</span>
                       <span className="count">
@@ -104,13 +105,6 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
             </>
           )}
 
-          <div className="sb-label" style={{ paddingTop: 10 }}>
-            Saved views
-          </div>
-          <div className="sb-hint" style={{ paddingLeft: 8 }}>
-            Save a view from the map to see it here.
-          </div>
-
           <div
             className={`sb-row muted ${route.page === "settings" ? "active" : ""}`}
             style={{ marginTop: 6 }}
@@ -127,6 +121,7 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
       <div className="user-row">
         <div className="avatar">{user.slice(0, 2)}</div>
         <div style={{ flex: 1 }}>{user}</div>
+        <VersionButton />
       </div>
     </aside>
   );

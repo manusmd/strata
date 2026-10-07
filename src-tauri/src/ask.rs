@@ -24,7 +24,7 @@ pub struct ClaudeStatus {
 }
 
 /// Apps started from the Finder don't get the shell's PATH, so ask a login shell once.
-fn login_path() -> &'static str {
+pub(crate) fn login_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
@@ -62,7 +62,7 @@ fn version_of(path: &Path) -> Option<String> {
 
 /// The newest `claude` among all installations (Homebrew, npm and the native
 /// installer can coexist, and a login shell's PATH may list an old one first).
-fn find_claude() -> Option<PathBuf> {
+pub(crate) fn find_claude() -> Option<PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
     FOUND
         .get_or_init(|| {

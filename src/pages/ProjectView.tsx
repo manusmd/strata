@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Graph, Project, Repo, ScanProgress, api, shortPath } from "../api";
 import { StrataLogo } from "../components/StrataLogo";
 import { CodeMap, type ZoomLevel } from "../map/CodeMap";
@@ -6,7 +6,14 @@ import { DbMap } from "../map/DbMap";
 import { ArchMap } from "../map/ArchMap";
 import type { WorkspacePackage } from "../map/archModel";
 import { AskPanel } from "../ask/AskPanel";
+import { ProjectHome } from "../home/ProjectHome";
 import { focusOn, type Focus } from "../map/focus";
+import { AiContext } from "../summary/SummarySection";
+import { summaryStore, useSummaries } from "../summary/store";
+import { archSubject, tableSubject, type Subject } from "../summary/subjects";
+import { buildArchModel } from "../map/archModel";
+import { buildDbModel } from "../map/dbModel";
+import { useSectionPlan } from "../sections/useSections";
 import { LENSES, Lens } from "../routes";
 
 export type Progress = Record<string, ScanProgress>;
@@ -35,7 +42,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
 
   return (
     <>
-      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
+      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
         {LEVELS.map((l) => (
           <button key={l} className={`level-btn ${l === level ? "on" : ""}`} onClick={() => onLevel(l)}>
             {l}
@@ -43,9 +50,9 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
         ))}
       </div>
       <div className="spacer" data-tauri-drag-region />
-      <div className={`seg ${ready ? "" : "disabled-ui"}`} title={title}>
+      <div className="seg">
         {LENSES.map((l) => (
-          <button key={l.id} className={lens === l.id ? "on" : ""} onClick={() => setLens(l.id)}>
+          <button key={l.id} className={`${lens === l.id ? "on" : ""} ${ready || l.id === "home" ? "" : "disabled-ui"}`} title={l.id === "home" ? undefined : title} onClick={() => setLens(l.id)}>
             <span className="dot" style={{ background: l.color }} />
             {l.label}
           </button>
@@ -57,7 +64,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
           {isScanning(project) ? "Scanning…" : "↻ Rescan"}
         </button>
       )}
-      {ready && (
+      {ready && lens !== "home" && (
         <button className={`btn small ask-toggle ${askOpen ? "on" : ""}`} onClick={onToggleAsk} title="Ask Strata (⌘J)">
           <span style={{ color: "var(--arch)" }}>✦</span> Ask Strata
         </button>
@@ -139,12 +146,41 @@ type Props = {
   jump: { lens: Lens; id: string; n: number } | null;
   /** A question to send to Ask Strata (from ⌘K). */
   askRequest: { q: string; n: number } | null;
+  onEnableAi: () => void;
+  onOpenSettings: () => void;
 };
 
-export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, onLevel, zoomRequest, askOpen, onCloseAsk, onData, jump, askRequest }: Props) {
+export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, onLevel, zoomRequest, askOpen, onCloseAsk, onData, jump, askRequest, onEnableAi, onOpenSettings }: Props) {
   const [graph, setGraph] = useState<Graph | null>(null);
   // Where to land when jumping between lenses (a file in Code, a table in Database).
   const [focus, setFocus] = useState<{ code: Focus | null; db: Focus | null; arch: Focus | null }>({ code: null, db: null, arch: null });
+  // AI sections per lens, remembered per project.
+  const sectionsKey = `strata-sections-${project.id}`;
+  const [sectionsOn, setSectionsOn] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(sectionsKey) ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const toggleSections = (lensId: string, on: boolean) => {
+    const next = { ...sectionsOn, [lensId]: on };
+    setSectionsOn(next);
+    try {
+      localStorage.setItem(sectionsKey, JSON.stringify(next));
+    } catch {}
+    if (on && project.aiMode === "off") onEnableAi();
+  };
+  const sectionLens = lens === "code" || lens === "arch" || lens === "db" ? lens : null;
+  const sectionsEnabled = !!sectionLens && !!sectionsOn[sectionLens] && project.aiMode !== "off";
+
+  // The chat open on the Overview (null = the project overview itself).
+  const [chatId, setChatId] = useState<string | null>(null);
+  const openRef = (ref: { kind: "file" | "table" | "node"; id: string }) => {
+    const key = ref.kind === "file" ? "code" : ref.kind === "table" ? "db" : "arch";
+    setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
+    setLens(key);
+  };
   // Packages every repo in the workspace provides, to trace "missing" imports to a repo.
   const [workspace, setWorkspace] = useState<WorkspacePackage[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +188,28 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
   const scanKey = project.repos.map((r) => `${r.id}@${r.lastScanAt ?? 0}`).join(",");
 
   useEffect(() => onData(graph, workspace), [graph, workspace, onData]);
+
+  useEffect(() => {
+    summaryStore.load(project.id);
+  }, [project.id]);
+
+  // "auto" mode: write summaries for every component and table in the background.
+  const summaries = useSummaries(project.id);
+  const pregen = useMemo<Subject[]>(() => {
+    if (project.aiMode !== "auto" || !graph) return [];
+    const arch = buildArchModel(graph, project.repos, workspace);
+    const db = buildDbModel(graph, project.repos);
+    return [
+      ...arch.nodes.map((n) => archSubject(project, arch, graph, n.id)),
+      ...[...db.tables.keys()].map((id) => tableSubject(project, db, id)),
+    ].filter((x): x is Subject => !!x);
+  }, [project, graph, workspace]);
+  useEffect(() => {
+    for (const subj of pregen) if (summaryStore.needs(project.id, subj) && !summaryStore.get(project.id, subj.nodeId)?.error) summaryStore.request(project, subj);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pregen]);
+  const pregenLeft = pregen.filter((p) => summaries[p.nodeId]?.pending).length;
+  const sections = useSectionPlan(project, sectionLens, graph, workspace, sectionsEnabled);
 
   useEffect(() => {
     if (!jump) return;
@@ -196,9 +254,6 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
             <button className="btn primary" onClick={onAddFolder}>
               Add local folder
             </button>
-            <button className="btn" disabled title="Coming soon">
-              Add from GitHub
-            </button>
           </div>
           {suggestions.length > 0 && (
             <>
@@ -217,6 +272,14 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           )}
         </div>
       </div>
+    );
+  }
+
+  if (lens === "home") {
+    return (
+      <AiContext.Provider value={{ project, enable: onEnableAi, openSettings: onOpenSettings }}>
+        <ProjectHome project={project} graph={graph} workspace={workspace} chatId={chatId} setChatId={setChatId} onOpen={openRef} />
+      </AiContext.Provider>
     );
   }
 
@@ -255,6 +318,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
 
   const scanningNow = project.repos.filter((r) => r.scanStatus === "scanning");
   return (
+    <AiContext.Provider value={{ project, enable: onEnableAi, openSettings: onOpenSettings }}>
     <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
     <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
       {lens === "arch" ? (
@@ -272,12 +336,14 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           }}
           onAddRepo={onAddRepoPath}
           focus={focus.arch}
+          plan={sections.plan}
         />
       ) : lens === "db" ? (
         <DbMap
           project={project}
           graph={graph}
           focus={focus.db}
+          plan={sections.plan}
           onOpenFile={(id) => {
             setFocus((f) => ({ ...f, code: id ? focusOn(id) : null }));
             setLens("code");
@@ -290,11 +356,28 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           onLevel={onLevel}
           zoomRequest={zoomRequest}
           focus={focus.code}
+          plan={sections.plan}
           onOpenTable={(id) => {
             setFocus((f) => ({ ...f, db: id ? focusOn(id) : null }));
             setLens("db");
           }}
         />
+      )}
+      {sectionLens && (
+        <div className="sections-toggle glass">
+          <button className={!sectionsOn[sectionLens] ? "on" : ""} onClick={() => toggleSections(sectionLens, false)}>
+            Structure
+          </button>
+          <button className={sectionsOn[sectionLens] ? "on" : ""} onClick={() => toggleSections(sectionLens, true)} title="Let Claude group this map into sections by domain">
+            <span className="ai-spark">✦</span> AI sections
+          </button>
+          {sectionsEnabled && sections.pending && <Organizing />}
+          {sectionsEnabled && sections.error && !sections.pending && (
+            <button className="sections-retry" title={sections.error} onClick={() => sections.retry()}>
+              Failed · retry
+            </button>
+          )}
+        </div>
       )}
       {scanningNow.length > 0 && (
         <div className="glass scan-pill">
@@ -312,6 +395,11 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           lens={lens}
           request={askRequest}
           onClose={onCloseAsk}
+          onSaveAsChat={(id) => {
+            setChatId(id);
+            onCloseAsk();
+            setLens("home");
+          }}
           onOpen={(ref) => {
             const key = ref.kind === "file" ? "code" : ref.kind === "table" ? "db" : "arch";
             setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
@@ -319,6 +407,22 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           }}
         />
       )}
+      {pregenLeft > 0 && (
+        <div className="glass scan-pill" style={{ top: "auto", bottom: 14, left: "50%" }}>
+          <span className="ai-spark">✦</span> Writing summaries · {pregenLeft} left
+        </div>
+      )}
     </div>
+    </AiContext.Provider>
   );
+}
+
+/** "Organizing… 12s": a plan for a big lens takes a while, so show that it's moving. */
+function Organizing() {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="sections-status" title="Claude is grouping the items of this lens into sections">Organizing…{secs >= 3 ? ` ${secs}s` : ""}</span>;
 }

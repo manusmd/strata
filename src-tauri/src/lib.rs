@@ -3,6 +3,9 @@ mod scanner;
 mod schema;
 mod arch;
 mod ask;
+mod summary;
+mod logo;
+mod update;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -156,8 +159,89 @@ fn ask_cancel(app: AppHandle, ask_id: String) {
 }
 
 #[tauri::command]
+fn set_project_ai(db: State<Db>, id: String, mode: String, model: String) -> CmdResult<()> {
+    db::set_project_ai(&db.0.lock().unwrap(), &id, &mode, &model).map_err(err)
+}
+
+#[tauri::command]
+fn project_summaries(db: State<Db>, project_id: String) -> CmdResult<Vec<db::Summary>> {
+    db::project_summaries(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+#[tauri::command]
+fn clear_summaries(db: State<Db>, project_id: String) -> CmdResult<usize> {
+    db::clear_summaries(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+/// Generates and stores one summary. Runs on a blocking thread; at most a few at once.
+#[tauri::command]
+async fn summarize(app: AppHandle, request: summary::SummaryRequest) -> CmdResult<String> {
+    let request = std::sync::Arc::new(request);
+    let req = request.clone();
+    let text = tauri::async_runtime::spawn_blocking(move || summary::summarize(&req)).await.map_err(err)??;
+    let db = app.state::<Db>();
+    db::save_summary(&db.0.lock().unwrap(), &request.project_id, &request.node_id, &request.hash, &text, &request.model).map_err(err)?;
+    Ok(text)
+}
+
+/// Generates (and stores) the AI sections plan for one lens: JSON text.
+#[tauri::command]
+async fn organize(app: AppHandle, project_id: String, lens: String, hash: String, prompt: String, model: String) -> CmdResult<String> {
+    let m = model.clone();
+    let plan = tauri::async_runtime::spawn_blocking(move || summary::organize(&prompt, &m)).await.map_err(err)??;
+    let db = app.state::<Db>();
+    db::save_summary(&db.0.lock().unwrap(), &project_id, &format!("plan:{lens}"), &hash, &plan, &model).map_err(err)?;
+    Ok(plan)
+}
+
+#[tauri::command]
+fn list_chats(db: State<Db>, project_id: String) -> CmdResult<Vec<db::Chat>> {
+    db::list_chats(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+#[tauri::command]
+fn create_chat(db: State<Db>, project_id: String, title: String) -> CmdResult<String> {
+    db::create_chat(&db.0.lock().unwrap(), &project_id, &title).map_err(err)
+}
+
+#[tauri::command]
+fn chat_messages(db: State<Db>, chat_id: String) -> CmdResult<Vec<db::ChatMessage>> {
+    db::chat_messages(&db.0.lock().unwrap(), &chat_id).map_err(err)
+}
+
+#[tauri::command]
+fn append_chat_message(db: State<Db>, chat_id: String, role: String, content: serde_json::Value) -> CmdResult<()> {
+    db::append_chat_message(&db.0.lock().unwrap(), &chat_id, &role, &content).map_err(err)
+}
+
+#[tauri::command]
+fn update_chat(db: State<Db>, chat_id: String, title: Option<String>, session_id: Option<String>) -> CmdResult<()> {
+    db::update_chat(&db.0.lock().unwrap(), &chat_id, title.as_deref(), session_id.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+fn delete_chat(db: State<Db>, chat_id: String) -> CmdResult<()> {
+    db::delete_chat(&db.0.lock().unwrap(), &chat_id).map_err(err)
+}
+
+#[tauri::command]
 fn current_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "you".into())
+}
+
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle, pending: State<'_, update::Pending>) -> Result<Option<update::UpdateInfo>, String> {
+    update::check(app, pending).await
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, pending: State<'_, update::Pending>) -> Result<(), String> {
+    update::install(app, pending).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -165,12 +249,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let conn = db::open(&dir)?;
             app.manage(Db(Mutex::new(conn)));
             app.manage(Scanning::default());
             app.manage(ask::Asks::default());
+            app.manage(update::Pending::default());
 
             #[cfg(target_os = "macos")]
             {
@@ -195,7 +281,21 @@ pub fn run() {
             claude_status,
             ask_start,
             ask_cancel,
-            current_user
+            set_project_ai,
+            project_summaries,
+            clear_summaries,
+            summarize,
+            organize,
+            list_chats,
+            create_chat,
+            chat_messages,
+            append_chat_message,
+            update_chat,
+            delete_chat,
+            current_user,
+            app_version,
+            check_update,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

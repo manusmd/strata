@@ -18,13 +18,15 @@ export type PaletteItem = {
   action?: string;
   /** Small boost so more important things win ties (exported symbols, big tables…). */
   boost?: number;
+  /** AI summary, searched but not shown. */
+  about?: string;
 };
 
 export const KIND_LABEL: Record<ItemKind, string> = { file: "Files", symbol: "Symbols", table: "Tables", component: "Components", folder: "Folders", action: "Actions" };
 export const KIND_ICON: Record<ItemKind, string> = { file: "TS", symbol: "ƒ", table: "▦", component: "◆", folder: "▤", action: "›" };
 
 /** Everything in the project you can jump to, built once per graph. */
-export function buildIndex(project: Project, graph: Graph, workspace: WorkspacePackage[]): PaletteItem[] {
+export function buildIndex(project: Project, graph: Graph, workspace: WorkspacePackage[], summaries: Map<string, string> = new Map()): PaletteItem[] {
   const repoName = (id: string | null) => project.repos.find((r) => r.id === id)?.name ?? "";
   const multi = project.repos.length > 1;
   const items: PaletteItem[] = [];
@@ -68,5 +70,6 @@ export function buildIndex(project: Project, graph: Graph, workspace: WorkspaceP
     if (!c.dir) continue;
     items.push({ key: c.id, kind: "folder", title: c.dir.split("/").pop()!, subtitle: `${multi ? `${repoName(c.repoId)}/` : ""}${c.dir}/ · ${c.files.length} files`, tag: "folder", color: "var(--text-3)", target: { lens: "code", id: c.id } });
   }
+  for (const item of items) item.about = summaries.get(item.key);
   return items;
 }

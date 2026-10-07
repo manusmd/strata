@@ -59,6 +59,34 @@ CREATE TABLE IF NOT EXISTS edges (
   PRIMARY KEY (src, dst, kind)
 );
 
+-- AI summaries of map items, with the hash of what they summarize (to spot outdated ones).
+CREATE TABLE IF NOT EXISTS summaries (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  node_id     TEXT NOT NULL,
+  hash        TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (project_id, node_id)
+);
+
+-- Saved chats per project (the project's overview screen), continued via the Claude session.
+CREATE TABLE IF NOT EXISTS chats (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  session_id  TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id     TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL,      -- user | assistant
+  content     TEXT NOT NULL,      -- JSON: { text, activity?, error?, cost? }
+  created_at  INTEGER NOT NULL
+);
+
 -- Packages a repo imports, and whether its package.json declares them.
 CREATE TABLE IF NOT EXISTS repo_packages (
   repo_id   TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
@@ -91,6 +119,11 @@ pub struct Project {
     pub name: String,
     pub color: String,
     pub created_at: i64,
+    /// off | click | auto (click + pre-generate components and tables)
+    pub ai_mode: String,
+    pub ai_model: String,
+    /// Best logo found in the project's repos, as a data URL.
+    pub logo: Option<String>,
     pub repos: Vec<Repo>,
 }
 
@@ -106,10 +139,17 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<
 
 /// Brings databases created by older builds up to the current schema.
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    for col in ["scan_error TEXT", "stats TEXT", "package_name TEXT"] {
+    for col in ["scan_error TEXT", "stats TEXT", "package_name TEXT", "logo TEXT", "logo_score INTEGER"] {
         let name = col.split(' ').next().unwrap();
         if !has_column(conn, "repos", name)? {
             conn.execute_batch(&format!("ALTER TABLE repos ADD COLUMN {col}"))?;
+        }
+    }
+    // AI summaries: off until the user turns them on for a project.
+    for col in ["ai_mode TEXT NOT NULL DEFAULT 'off'", "ai_model TEXT NOT NULL DEFAULT 'haiku'"] {
+        let name = col.split(' ').next().unwrap();
+        if !has_column(conn, "projects", name)? {
+            conn.execute_batch(&format!("ALTER TABLE projects ADD COLUMN {col}"))?;
         }
     }
     if !has_column(conn, "edges", "repo_id")? {
@@ -171,16 +211,27 @@ fn repos_for(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Repo>>
 }
 
 pub fn list_projects(conn: &Connection) -> rusqlite::Result<Vec<Project>> {
-    let mut stmt = conn.prepare("SELECT id, name, color, created_at FROM projects ORDER BY created_at")?;
+    let mut stmt = conn.prepare("SELECT id, name, color, created_at, ai_mode, ai_model FROM projects ORDER BY created_at")?;
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     rows.into_iter()
-        .map(|(id, name, color, created_at)| {
+        .map(|(id, name, color, created_at, ai_mode, ai_model)| {
             let repos = repos_for(conn, &id)?;
-            Ok(Project { id, name, color, created_at, repos })
+            let logo = project_logo(conn, &id)?;
+            Ok(Project { id, name, color, created_at, ai_mode, ai_model, logo, repos })
         })
         .collect()
+}
+
+/// The highest-scoring logo across the project's repos (earlier repos win ties).
+fn project_logo(conn: &Connection, project_id: &str) -> rusqlite::Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.path, r.logo FROM repos r JOIN project_repos pr ON pr.repo_id = r.id
+         WHERE pr.project_id = ?1 AND r.logo IS NOT NULL ORDER BY r.logo_score DESC, pr.added_at",
+    )?;
+    let candidates = stmt.query_map([project_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(candidates.into_iter().find_map(|(root, rel)| crate::logo::data_url(&Path::new(&root).join(rel))))
 }
 
 pub fn create_project(conn: &Connection, name: &str, color: &str) -> rusqlite::Result<String> {
@@ -308,8 +359,8 @@ pub fn save_scan(conn: &mut Connection, repo_id: &str, scan: &ScanResult) -> rus
         }
     }
     tx.execute(
-        "UPDATE repos SET scan_status = 'ok', scan_error = NULL, last_scan_at = ?2, stats = ?3, package_name = ?4 WHERE id = ?1",
-        params![repo_id, now(), serde_json::to_string(&scan.stats).unwrap_or_default(), scan.package_name],
+        "UPDATE repos SET scan_status = 'ok', scan_error = NULL, last_scan_at = ?2, stats = ?3, package_name = ?4, logo = ?5, logo_score = ?6 WHERE id = ?1",
+        params![repo_id, now(), serde_json::to_string(&scan.stats).unwrap_or_default(), scan.package_name, scan.logo.as_ref().map(|l| &l.0), scan.logo.as_ref().map(|l| l.1)],
     )?;
     // Packages nobody imports any more.
     tx.execute("DELETE FROM nodes WHERE kind = 'package' AND id NOT IN (SELECT dst FROM edges)", [])?;
@@ -410,6 +461,127 @@ pub fn workspace_packages(conn: &Connection) -> rusqlite::Result<Vec<WorkspacePa
     rows
 }
 
+// ---------- AI summaries ----------
+
+pub fn set_project_ai(conn: &Connection, id: &str, mode: &str, model: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE projects SET ai_mode = ?2, ai_model = ?3 WHERE id = ?1", params![id, mode, model])?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Summary {
+    pub node_id: String,
+    pub hash: String,
+    pub text: String,
+    pub model: String,
+    pub created_at: i64,
+}
+
+pub fn save_summary(conn: &Connection, project_id: &str, node_id: &str, hash: &str, text: &str, model: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO summaries (project_id, node_id, hash, text, model, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![project_id, node_id, hash, text, model, now()],
+    )?;
+    Ok(())
+}
+
+pub fn project_summaries(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Summary>> {
+    let mut stmt = conn.prepare("SELECT node_id, hash, text, model, created_at FROM summaries WHERE project_id = ?1")?;
+    let rows = stmt
+        .query_map([project_id], |r| Ok(Summary { node_id: r.get(0)?, hash: r.get(1)?, text: r.get(2)?, model: r.get(3)?, created_at: r.get(4)? }))?
+        .collect();
+    rows
+}
+
+pub fn clear_summaries(conn: &Connection, project_id: &str) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM summaries WHERE project_id = ?1", [project_id])
+}
+
+// ---------- Chats ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chat {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub session_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub messages: i64,
+    /// First line of the last answer, for the chat list.
+    pub preview: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: serde_json::Value,
+    pub created_at: i64,
+}
+
+pub fn list_chats(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Chat>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.project_id, c.title, c.session_id, c.created_at, c.updated_at,
+                (SELECT COUNT(*) FROM chat_messages m WHERE m.chat_id = c.id),
+                (SELECT m.content FROM chat_messages m WHERE m.chat_id = c.id AND m.role = 'assistant' ORDER BY m.id DESC LIMIT 1)
+         FROM chats c WHERE c.project_id = ?1 ORDER BY c.updated_at DESC",
+    )?;
+    let rows = stmt
+        .query_map([project_id], |r| {
+            let last: Option<String> = r.get(7)?;
+            let preview = last
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+                .map(|t| t.lines().find(|l| !l.trim().is_empty() && !l.starts_with("```")).unwrap_or("").chars().take(160).collect());
+            Ok(Chat { id: r.get(0)?, project_id: r.get(1)?, title: r.get(2)?, session_id: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)?, messages: r.get(6)?, preview })
+        })?
+        .collect();
+    rows
+}
+
+pub fn create_chat(conn: &Connection, project_id: &str, title: &str) -> rusqlite::Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let t = now();
+    conn.execute("INSERT INTO chats (id, project_id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)", params![id, project_id, title, t])?;
+    Ok(id)
+}
+
+pub fn chat_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<ChatMessage>> {
+    let mut stmt = conn.prepare("SELECT role, content, created_at FROM chat_messages WHERE chat_id = ?1 ORDER BY id")?;
+    let rows = stmt
+        .query_map([chat_id], |r| {
+            let content: String = r.get(1)?;
+            Ok(ChatMessage { role: r.get(0)?, content: serde_json::from_str(&content).unwrap_or(serde_json::Value::Null), created_at: r.get(2)? })
+        })?
+        .collect();
+    rows
+}
+
+pub fn append_chat_message(conn: &Connection, chat_id: &str, role: &str, content: &serde_json::Value) -> rusqlite::Result<()> {
+    let t = now();
+    conn.execute("INSERT INTO chat_messages (chat_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)", params![chat_id, role, content.to_string(), t])?;
+    conn.execute("UPDATE chats SET updated_at = ?2 WHERE id = ?1", params![chat_id, t])?;
+    Ok(())
+}
+
+pub fn update_chat(conn: &Connection, chat_id: &str, title: Option<&str>, session_id: Option<&str>) -> rusqlite::Result<()> {
+    if let Some(t) = title {
+        conn.execute("UPDATE chats SET title = ?2 WHERE id = ?1", params![chat_id, t])?;
+    }
+    if let Some(s) = session_id {
+        conn.execute("UPDATE chats SET session_id = ?2 WHERE id = ?1", params![chat_id, s])?;
+    }
+    Ok(())
+}
+
+pub fn delete_chat(conn: &Connection, chat_id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM chats WHERE id = ?1", [chat_id])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +639,7 @@ mod tests {
             edges: vec![GraphEdge { src: format!("{repo}:{}", files[0]), dst: "pkg:stripe".into(), kind: "imports".into() }],
             stats: ScanStats::default(),
             package_name: Some("api".into()),
+            logo: None,
         };
         save_scan(&mut conn, &repo, &scan(&["a.ts", "b.ts"])).unwrap();
         save_scan(&mut conn, &repo, &scan(&["c.ts"])).unwrap();
@@ -526,6 +699,47 @@ mod tests {
         assert_eq!(types.repo_id, repo);
         assert_eq!(types.projects, vec!["Internal Tools"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn summaries_are_stored_per_project_and_replaced() {
+        let conn = mem();
+        let p = create_project(&conn, "P", "#fff").unwrap();
+        assert_eq!(list_projects(&conn).unwrap()[0].ai_mode, "off", "AI is off by default");
+        set_project_ai(&conn, &p, "click", "sonnet").unwrap();
+        let pr = &list_projects(&conn).unwrap()[0];
+        assert_eq!((pr.ai_mode.as_str(), pr.ai_model.as_str()), ("click", "sonnet"));
+
+        save_summary(&conn, &p, "r:src/a.ts", "h1", "First.", "haiku").unwrap();
+        save_summary(&conn, &p, "r:src/a.ts", "h2", "Second.", "haiku").unwrap();
+        let s = project_summaries(&conn, &p).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!((s[0].hash.as_str(), s[0].text.as_str()), ("h2", "Second."));
+        assert_eq!(clear_summaries(&conn, &p).unwrap(), 1);
+        delete_project(&conn, &p).unwrap();
+    }
+
+    #[test]
+    fn chats_keep_messages_and_session() {
+        let conn = mem();
+        let p = create_project(&conn, "P", "#fff").unwrap();
+        let a = create_chat(&conn, &p, "How does checkout work?").unwrap();
+        append_chat_message(&conn, &a, "user", &serde_json::json!({ "text": "How does checkout work?" })).unwrap();
+        append_chat_message(&conn, &a, "assistant", &serde_json::json!({ "text": "\nCheckout starts in web.\nMore." })).unwrap();
+        update_chat(&conn, &a, Some("Checkout flow"), Some("sess-1")).unwrap();
+        let b = create_chat(&conn, &p, "Second").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        append_chat_message(&conn, &a, "user", &serde_json::json!({ "text": "and refunds?" })).unwrap();
+
+        let chats = list_chats(&conn, &p).unwrap();
+        assert_eq!(chats[0].id, a, "most recently active first");
+        assert_eq!((chats[0].title.as_str(), chats[0].session_id.as_deref(), chats[0].messages), ("Checkout flow", Some("sess-1"), 3));
+        assert_eq!(chats[0].preview.as_deref(), Some("Checkout starts in web."));
+        assert_eq!(chat_messages(&conn, &a).unwrap()[1].content["text"], "\nCheckout starts in web.\nMore.");
+        delete_chat(&conn, &b).unwrap();
+        assert_eq!(list_chats(&conn, &p).unwrap().len(), 1);
+        delete_project(&conn, &p).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM chat_messages", [], |r| r.get::<_, i64>(0)).unwrap(), 0, "messages go with the project");
     }
 }
 
