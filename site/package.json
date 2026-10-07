@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "rm -rf .next/cache/fetch-cache",
     "build": "next build",
     "start": "npx serve out"
   },
