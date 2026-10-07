@@ -29,6 +29,16 @@ cd src-tauri && STRATA_SCAN=~/dev/some-repo cargo test --release real_repo -- --
 cd src-tauri && STRATA_SCAN=~/dev/some-repo STRATA_FIXTURE=../public/fixture.json cargo test --release real_repo -- --ignored --nocapture
 ```
 
+## Website
+
+The landing page lives in `site/` (Next.js, exported as static files) and is published to GitHub Pages by `.github/workflows/site.yml` — on every change in `site/` and whenever a release is published. The download button, version and changelog are read from the GitHub releases at build time (the "What's new" list of each release's notes).
+
+```bash
+cd site && pnpm install && pnpm dev   # http://localhost:3000/strata/
+```
+
+SEO/GEO: metadata and Open Graph image in `site/app`, JSON-LD (`SoftwareApplication`, `FAQPage`) in `site/app/page.tsx`, `robots.txt`, `sitemap.xml` and `public/llms.txt` for AI assistants. For a custom domain, build with `BASE_PATH="" SITE_URL=https://your.domain`.
+
 ## Project logos
 
 During a scan Strata looks for the most logo-like image in each repo (`*logo*`, app icons, `icon.svg`, apple-touch-icon, favicons; svg/png preferred, tests and docs skipped — see `src-tauri/src/logo.rs`). The best one across a project's repos becomes the project image; projects without one show their initials.

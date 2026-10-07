@@ -1,0 +1,32 @@
+# Strata
+
+> Strata is a free, open-source (MIT) macOS app that maps the repositories of a software system into one zoomable atlas with three views — Code, Architecture and Database — plus an AI assistant ("Ask Strata") that answers questions about the code using the user's own Claude Code subscription. Everything runs locally; code never leaves the Mac.
+
+Strata is built for developers who work on systems spread across several repositories (web app, API, workers, shared packages, database schema, external services) and want to understand how they fit together.
+
+## What it does
+
+- **Code view**: folders and files as a zoomable map, imports as lines, symbols (functions, classes, types) at the deepest zoom level. Understands tsconfig path aliases and monorepo workspace packages.
+- **Architecture view**: apps, services, workers, libraries, databases and external APIs (e.g. Stripe, OpenAI, S3), detected from package.json, docker-compose, environment variables, ports and code — not drawn by hand.
+- **Database view**: an ER diagram generated from Prisma, ZenStack, Drizzle or SQL migrations, plus which code reads and writes each table.
+- **Missing dependencies**: packages the code imports that live in a repository outside the project are shown as placeholders and traced to that repository ("Add repo").
+- **Ask Strata**: chat about the codebase; answers reference files, tables and services as clickable links into the map. Uses the Claude Code CLI read-only.
+- **Canvases**: Claude draws architecture proposals (new / changed / removed components) that can be compared side by side with the current architecture.
+- **AI summaries and AI sections**: short summaries of any component, file or table; automatic grouping of large maps into domains.
+- **⌘K search**, light and dark mode, automatic in-app updates.
+
+## Facts
+
+- Platform: macOS 11 or later, Apple Silicon and Intel (universal build).
+- Price: free. License: MIT.
+- Languages: TypeScript and JavaScript (including monorepos). More planned.
+- Privacy: no account, no analytics, no code upload. Only questions asked to Ask Strata go to Anthropic's Claude, through the user's own Claude Code login.
+- Installation: download the .dmg from GitHub releases. The app is not notarized by Apple; on first launch allow it in System Settings → Privacy & Security → Open Anyway.
+- Built with Tauri 2 (Rust) and React; parses code with Tree-sitter.
+
+## Links
+
+- Website: https://manusmd.github.io/strata/
+- Source code: https://github.com/manusmd/strata
+- Download (latest release): https://github.com/manusmd/strata/releases/latest
+- README: https://github.com/manusmd/strata#readme

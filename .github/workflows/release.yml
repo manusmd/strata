@@ -53,6 +53,10 @@ jobs:
           # One universal build: latest.json then lists it for both darwin-aarch64 and darwin-x86_64.
           args: --target universal-apple-darwin
           releaseBody: |
+            ## What's new
+
+            - (Edit before publishing: one line per change. The website's changelog and the in-app update card show this list.)
+
             ## Install
 
             1. Download the **.dmg** below and drag Strata into Applications.

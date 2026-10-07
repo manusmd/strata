@@ -12,7 +12,7 @@ Connect the repos of a project and explore them as one zoomable map — code, ar
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![MIT License](https://img.shields.io/badge/license-MIT-14B8A6)](LICENSE)
 
-[**Download for macOS**](https://github.com/manusmd/strata/releases/latest) · [Install guide](#install) · [Features](#features) · [Development](docs/DEVELOPMENT.md)
+[**Website**](https://manusmd.github.io/strata/) · [**Download for macOS**](https://github.com/manusmd/strata/releases/latest) · [Install guide](#install) · [Features](#features) · [Development](docs/DEVELOPMENT.md)
 
 <br />
 
