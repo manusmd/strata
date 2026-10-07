@@ -7,5 +7,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: `${SITE_URL}/`, changeFrequency: "weekly", priority: 1 },
     { url: `${SITE_URL}/llms.txt`, changeFrequency: "weekly", priority: 0.5 },
+    ...["imprint", "impressum", "privacy", "datenschutz"].map((p) => ({ url: `${SITE_URL}/${p}/`, changeFrequency: "yearly" as const, priority: 0.2 })),
   ];
 }

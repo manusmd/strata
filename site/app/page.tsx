@@ -1,5 +1,6 @@
 import { CanvasDemo, CopyButton, MissingDemo, ShareLink } from "@/components/Interactive";
 import { HeroMock } from "@/components/HeroMock";
+import { Footer } from "@/components/Footer";
 import { Nav } from "@/components/Nav";
 import { StrataLogo } from "@/components/StrataLogo";
 import { FAQS } from "@/lib/faq";
@@ -608,30 +609,5 @@ function FinalCta({ href, verLine }: { href: string; verLine: string }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer style={{ borderTop: "1px solid var(--line)", padding: "32px var(--pad) 40px" }}>
-      <div style={s("max-width:1120px; margin:0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:20px 28px")}>
-        <div style={s("display:flex; align-items:center; gap:10px")}>
-          <span className="app-tile" style={s("width:26px; height:26px; border-radius:7px")}>
-            <StrataLogo size={19} />
-          </span>
-          <span className="wordmark" style={{ fontSize: 17 }}>
-            Strata
-          </span>
-        </div>
-        <nav aria-label="Footer" style={s("display:flex; gap:20px; font-size:14px; flex-wrap:wrap")}>
-          <a href={REPO_URL} style={{ color: "var(--text-2)" }}>GitHub</a>
-          <a href="#changelog" style={{ color: "var(--text-2)" }}>Changelog</a>
-          <a href="#faq" style={{ color: "var(--text-2)" }}>FAQ</a>
-          <a href={`${REPO_URL}/blob/main/LICENSE`} style={{ color: "var(--text-2)" }}>MIT license</a>
-        </nav>
-        <p style={s("margin:0; flex:1 1 260px; font-size:13px; color:var(--text-3); line-height:1.5")}>Privacy: Strata runs on your Mac. No account, no analytics, no code upload. This site has no cookies or trackers.</p>
-        <div style={s("font-size:13px; color:var(--text-3)")}>© {new Date().getFullYear()} Manuel Schmid</div>
-      </div>
-    </footer>
   );
 }
