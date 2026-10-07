@@ -28,6 +28,7 @@ export default async function Home() {
         <Missing />
         <AskStrata />
         <Canvases />
+        <Planning />
         <FeatureGrid />
         <Steps />
         <Install version={dl.version} />
@@ -370,6 +371,46 @@ function Canvases() {
         <p className="lead">Ask what a change would take and Strata answers with a canvas: a proposed architecture, marked up against the one you have. Click any part to see the real component behind it.</p>
       </div>
       <CanvasDemo />
+    </section>
+  );
+}
+
+/* ---------- Planning ---------- */
+
+function Planning() {
+  const steps: { n: string; c: string; t: string; d: string; files?: string[] }[] = [
+    { n: "01", c: V, t: "Describe the idea", d: "What you want to build and your constraints. Claude asks the few questions that matter." },
+    { n: "02", c: I, t: "Pick an architecture", d: "Two or three options with trade-offs. The one you pick becomes a plan you keep editing, with versions." },
+    { n: "03", c: T, t: "Generate the docs", d: "Rules for humans and coding agents, derived from the plan.", files: ["ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md", "docs/decisions/"] },
+    { n: "04", c: "#F59E0B", t: "Compare with code", d: "Once repos exist, see what's built, what's missing and where the code drifted from the plan." },
+  ];
+  return (
+    <section id="plan" className="wrap" style={{ paddingBottom: "var(--sec)" }} aria-labelledby="plan-title">
+      <div className="intro" style={{ marginBottom: 40 }}>
+        <div className="eyebrow">Planning</div>
+        <h2 id="plan-title" className="h2">
+          Start with a plan, not an empty repo.
+        </h2>
+        <p className="lead">Plan a new system with Claude before writing code: data model, decisions and open questions included. Then hand your coding agent the docs, and check later that the code still matches.</p>
+      </div>
+      <ol style={s("list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px")}>
+        {steps.map(({ n, c, t, d, files }) => {
+          return (
+            <li key={n} style={s("border:1px solid var(--line); border-radius:16px; padding:22px; display:flex; flex-direction:column; gap:8px; background:var(--bg)")}>
+              <div style={s(`font:600 12px ${mono}; color:${c}`)}>{n}</div>
+              <h3 style={s("margin:0; font-size:16px; font-weight:600; letter-spacing:-.01em")}>{t}</h3>
+              <p style={s("margin:0; font-size:14px; line-height:1.55; color:var(--text-2)")}>{d}</p>
+              {files && (
+                <div style={s("display:flex; flex-wrap:wrap; gap:6px; margin-top:4px")}>
+                  {files.map((f) => (
+                    <span key={f} style={s(`font:500 11.5px ${mono}; padding:3px 8px; border-radius:6px; background:var(--chip); color:var(--text-2)`)}>{f}</span>
+                  ))}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }

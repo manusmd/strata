@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   authors: [{ name: "Manuel Schmid", url: "https://github.com/manusmd" }],
   keywords: [
     "codebase visualization", "architecture diagram", "code map", "dependency graph", "ER diagram",
-    "monorepo", "macOS app", "developer tools", "Claude Code", "Prisma", "Drizzle", "TypeScript",
+    "monorepo", "macOS app", "developer tools", "Claude Code", "architecture planning", "AGENTS.md", "ADR", "Prisma", "Drizzle", "TypeScript",
   ],
   category: "developer tools",
   alternates: { canonical: `${SITE_URL}/` },

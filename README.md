@@ -27,6 +27,7 @@ Real systems don't live in one folder. A web app, an API, a worker, shared packa
 - 🗺️ **Three lenses on the same project** — Code, Architecture and Database.
 - 🔍 **Semantic zoom** — the map shows systems when you're far out and files and symbols when you zoom in.
 - 🧩 **Finds what's missing** — packages and services your code uses that aren't part of the project, traced back to the repo that provides them.
+- 📐 **Plan before you build** — sketch a new system with Claude, turn it into ARCHITECTURE.md, AGENTS.md and decision records, and later check the code against the plan.
 - ✦ **Ask Strata** — chat with Claude about your code; answers link straight into the map and can draw diagrams.
 - 🔒 **Local first** — scanning happens on your Mac. Nothing is uploaded; AI features use your own Claude Code login.
 
@@ -55,6 +56,14 @@ An ER diagram built from **Prisma**, **ZenStack**, **Drizzle** or plain **SQL mi
 Ask anything about the project. Claude starts from Strata's map, reads the actual code, and answers with clickable files, tables and services. When a picture helps, it draws a **canvas** — a diagram of a proposal with new, changed and removed parts that you can open full screen, click through, and compare side by side with today's architecture.
 
 <img src="docs/screenshots/canvas.png" alt="A proposal canvas full screen: a new payment-service selected, with its connections in the inspector" />
+
+### Plan
+
+Start a project from an idea instead of a repo. Describe what you want to build; Claude asks a few clarifying questions, proposes two or three architectures and turns the one you pick into a plan you can keep editing — on the canvas or by chatting. Every change is a version you can compare and restore.
+
+- **Data model, decisions and open questions** — planned tables owned by components, decision records (ADRs) and the questions still to answer.
+- **Generate docs** — ARCHITECTURE.md with a Mermaid diagram, AGENTS.md with rules derived from the plan (who owns which table, who talks to which external service), CLAUDE.md, a data-model doc, one file per decision and a README per component. Optionally a ROADMAP.md drafted by Claude.
+- **Compare with code** — once repos exist, Strata marks every planned component as built, missing, unplanned or different, and points to the file where the code deviates. Explain it with Claude or update the plan from the code.
 
 ### And also
 

@@ -12,6 +12,7 @@ Strata is built for developers who work on systems spread across several reposit
 - **Missing dependencies**: packages the code imports that live in a repository outside the project are shown as placeholders and traced to that repository ("Add repo").
 - **Ask Strata**: chat about the codebase; answers reference files, tables and services as clickable links into the map. Uses the Claude Code CLI read-only.
 - **Canvases**: Claude draws architecture proposals (new / changed / removed components) that can be compared side by side with the current architecture.
+- **Planning**: plan a new system before writing code. Claude asks clarifying questions, proposes 2–3 architectures, and the chosen one becomes an editable, versioned plan with a data model, decision records (ADRs) and open questions. Strata generates ARCHITECTURE.md (with a Mermaid diagram), AGENTS.md, CLAUDE.md, a data-model doc and ADR files, and later compares the plan with the actual code (built, missing, unplanned, deviating).
 - **AI summaries and AI sections**: short summaries of any component, file or table; automatic grouping of large maps into domains.
 - **⌘K search**, light and dark mode, automatic in-app updates.
 
