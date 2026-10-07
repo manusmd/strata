@@ -37,6 +37,13 @@ During a scan Strata looks for the most logo-like image in each repo (`*logo*`, 
 
 Strata updates itself with the Tauri updater: it checks the feed in `tauri.conf.json` (`plugins.updater.endpoints`) a few seconds after launch and every 6 hours, and offers to install a newer version. "v0.x.y" in the sidebar footer checks manually.
 
+- **Shipping a release:** bump `version` in `src-tauri/tauri.conf.json` (and `package.json`), commit, then push a matching tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+  `.github/workflows/release.yml` builds a universal app (Apple Silicon + Intel), signs the update package with the `TAURI_SIGNING_PRIVATE_KEY` repo secret and creates a **draft** release with the DMG, `Strata.app.tar.gz(.sig)` and `latest.json`. Edit the notes (they're shown in the app's update card) and publish — from then on `releases/latest/download/latest.json` points at it and installed apps offer the update.
 - Updates are signed with the updater key in `~/.tauri/strata-updater.key` (never commit it; back it up — without it no installed copy accepts updates). The public half is `plugins.updater.pubkey`.
 - The app itself is only ad-hoc signed (`bundle.macOS.signingIdentity: "-"`), not notarized: on first launch users allow it under System Settings → Privacy & Security → Open Anyway. Updates installed by the app don't need that again.
 - A release build with update artifacts (`Strata.app.tar.gz` + `.sig`):

@@ -85,7 +85,7 @@ xattr -cr /Applications/Strata.app
 
 ### Requirements
 
-- macOS 11 or later on Apple Silicon.
+- macOS 11 or later, Apple Silicon or Intel.
 - For the AI features: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (`claude` once in a terminal). Maps, search and everything else work without it.
 - Repos in TypeScript or JavaScript (more languages are planned).
 
