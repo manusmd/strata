@@ -164,12 +164,13 @@ export const askStore = {
     set({ ...state, chats: { ...state.chats, [projectId]: chats } });
   },
 
-  async loadChat(chatId: string) {
+  /** `sessionId` for chats that aren't in the saved-chats list (the plan chat). */
+  async loadChat(chatId: string, sessionId?: string | null) {
     const key = chatKey(chatId);
     if (state.conversations[key]?.loaded || state.conversations[key]?.running) return;
     const rows = await invoke<{ role: string; content: any }[]>("chat_messages", { chatId }).catch(() => []);
     const projectId = chatProject.get(chatId);
-    const session = projectId ? state.chats[projectId]?.find((c) => c.id === chatId)?.sessionId ?? null : null;
+    const session = sessionId !== undefined ? sessionId : projectId ? state.chats[projectId]?.find((c) => c.id === chatId)?.sessionId ?? null : null;
     const messages: AskMessage[] = rows.map((r) =>
       r.role === "user"
         ? { role: "user", text: r.content?.text ?? "" }

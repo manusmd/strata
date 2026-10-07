@@ -106,6 +106,18 @@ pub fn organize(prompt: &str, model: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+const ROADMAP: &str = "You write ROADMAP.md for a software project that is about to be built, from its architecture plan. \
+Plan 3–5 milestones in build order, each small enough to ship and demo: a short title, one sentence on the goal, and 3–6 concrete bullet points (which components, tables and integrations get built, and what 'done' means). \
+Start with a walking skeleton through the main path, put risky integrations early, leave hardening for last. Use only components, tables and services from the plan. \
+Reply with only the Markdown file: start with '# Roadmap', use '## M1 — Title' headings and '-' bullets. No preamble, no code fences around the whole file. Write in English.";
+
+/// Drafts ROADMAP.md from a plan (the prompt describes the plan).
+pub fn roadmap(prompt: &str, model: &str) -> Result<String, String> {
+    let text = complete(ROADMAP, prompt, model)?;
+    let t = text.trim().trim_start_matches("```markdown").trim_start_matches("```md").trim_start_matches("```").trim_end_matches("```").trim();
+    Ok(format!("{t}\n"))
+}
+
 /// One tool-less Claude call with its own system prompt; returns the answer text.
 fn complete(system: &str, prompt: &str, model: &str) -> Result<String, String> {
     let claude = find_claude().ok_or("Claude Code isn't installed (no `claude` on PATH).")?;

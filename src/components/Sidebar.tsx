@@ -58,6 +58,7 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
           <div key={p.id} className={`sb-row ${p.id === activeId ? "active" : ""}`} onClick={() => navigate({ page: "project", id: p.id, lens: "home" })}>
             <ProjectTile name={p.name} color={p.color} logo={p.logo} />
             <span className="grow">{p.name}</span>
+            {(p.hasPlan || p.brief) && p.repos.length === 0 && <span className="sb-plan">Plan</span>}
             <span className="count">{p.repos.length}</span>
           </div>
         ))}

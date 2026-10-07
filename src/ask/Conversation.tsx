@@ -128,7 +128,7 @@ export function useAskModel(): [string, (m: string) => void] {
 }
 
 /** Input, stop button, model picker and plan usage. */
-export function Composer({ convKey, onSend, placeholder, autoFocus, model, setModel, disabled, big }: { convKey: string; onSend: (q: string) => void; placeholder: string; autoFocus?: boolean; model: string; setModel: (m: string) => void; disabled?: boolean; big?: boolean }) {
+export function Composer({ convKey, onSend, placeholder, autoFocus, model, setModel, disabled, big, prefill, hint }: { convKey: string; onSend: (q: string) => void; placeholder: string; autoFocus?: boolean; model: string; setModel: (m: string) => void; disabled?: boolean; big?: boolean; /** Puts text in the input (each new `n`), e.g. "Ask Claude about this component". */ prefill?: { text: string; n: number } | null; hint?: string }) {
   const conv = useConversation(convKey);
   const { usage } = useAskMeta();
   const [input, setInput] = useState("");
@@ -136,6 +136,17 @@ export function Composer({ convKey, onSend, placeholder, autoFocus, model, setMo
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus, convKey]);
+  useEffect(() => {
+    if (!prefill) return;
+    setInput(prefill.text);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
+  }, [prefill]);
   const send = () => {
     const q = input.trim();
     if (!q || conv.running) return;
@@ -183,7 +194,7 @@ export function Composer({ convKey, onSend, placeholder, autoFocus, model, setMo
             </option>
           ))}
         </select>
-        <span>Read-only</span>
+        <span>{hint ?? "Read-only"}</span>
         {usage.fiveHour !== undefined && <span title="Your Claude subscription's 5-hour usage window">{Math.round(usage.fiveHour * 100)}% of 5h limit</span>}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ELK, { type ElkExtendedEdge, type ElkNode } from "elkjs/lib/elk.bundled.js";
-import { Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import type { Graph, Project } from "../api";
 import { ArchMap } from "../map/ArchMap";
@@ -8,6 +8,7 @@ import { ArchInspector } from "../map/ArchInspector";
 import { fontsReady, lineCount, MONO, SANS, textWidth } from "../map/measure";
 import type { Ref } from "../ask/Markdown";
 import { buildArchModel, KIND_COLOR, type ArchModel, type WorkspacePackage } from "../map/archModel";
+import { RoutedEdge, type Pt } from "../map/RoutedEdge";
 import { parseCanvas, type Canvas, type CanvasEdge, type CanvasNode, type CanvasStatus } from "./spec";
 
 const CARD_W = 260;
@@ -77,46 +78,6 @@ const GroupBox = memo(({ data }: NodeProps<Node<{ label: string }>>) => (
     <span>{data.label}</span>
   </div>
 ));
-
-type Pt = { x: number; y: number };
-type RoutedData = { points: Pt[]; label?: string; labelBox?: { x: number; y: number; w: number; h: number }; className: string };
-
-/** SVG path through ELK's bend points, with rounded corners. */
-function roundedPath(pts: Pt[], r = 8) {
-  if (pts.length < 2) return "";
-  let d = `M${pts[0].x},${pts[0].y}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
-    const r1 = Math.min(r, Math.hypot(b.x - a.x, b.y - a.y) / 2, Math.hypot(c.x - b.x, c.y - b.y) / 2);
-    const towards = (p: Pt, q: Pt, len: number) => {
-      const l = Math.hypot(q.x - p.x, q.y - p.y) || 1;
-      return { x: p.x + ((q.x - p.x) / l) * len, y: p.y + ((q.y - p.y) / l) * len };
-    };
-    const p1 = towards(b, a, r1);
-    const p2 = towards(b, c, r1);
-    d += ` L${p1.x},${p1.y} Q${b.x},${b.y} ${p2.x},${p2.y}`;
-  }
-  const last = pts[pts.length - 1];
-  return `${d} L${last.x},${last.y}`;
-}
-
-/** An edge drawn along ELK's route (around boxes), with its label where ELK reserved room for it. */
-const RoutedEdge = memo(({ data, markerEnd }: EdgeProps<Edge<RoutedData>>) => {
-  if (!data) return null;
-  const b = data.labelBox;
-  return (
-    <>
-      <BaseEdge path={roundedPath(data.points)} markerEnd={markerEnd} />
-      {data.label && b && (
-        <EdgeLabelRenderer>
-          <div className={`flow-label ${data.className}`} style={{ transform: `translate(${b.x}px, ${b.y}px)`, width: b.w, height: b.h }} title={data.label}>
-            {data.label}
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  );
-});
 
 const nodeTypes = { card: CanvasCard, group: GroupBox };
 const edgeTypes = { routed: RoutedEdge };

@@ -20,6 +20,10 @@ const repo = (id: string, name: string, path: string, remote: string | null = nu
 const chats: { id: string; projectId: string; title: string; sessionId: string | null; createdAt: number; updatedAt: number }[] = [];
 const chatMessages: Record<string, { role: string; content: unknown; createdAt: number }[]> = {};
 
+// Plans: one planning chat and a list of versions per project.
+const planChats: Record<string, string> = {};
+const planVersions: Record<string, { version: number; title: string; changes: string; plan: unknown; source: string | null; createdAt: number }[]> = {};
+
 const summaries: Record<string, { projectId: string; nodeId: string; hash: string; text: string; model: string; createdAt: number }> = {};
 
 let projects: Project[] = [
@@ -183,7 +187,24 @@ export async function installDevMock() {
     const a = (args ?? {}) as Record<string, any>;
     switch (cmd) {
       case "list_projects":
-        return withAlsoIn();
+        return withAlsoIn().map((p) => ({ ...p, hasPlan: !!planVersions[p.id]?.length }));
+      case "docs_existing":
+        return (a.paths as string[]).filter((p) => p === "AGENTS.md" && a.dir.endsWith("/web-app"));
+      case "write_docs":
+        return new Promise((r) => setTimeout(() => r((a.files as unknown[]).length), 500));
+      case "draft_roadmap":
+        return new Promise((r) =>
+          setTimeout(
+            () =>
+              r(
+                "# Roadmap\n\n## M1 — Walking skeleton\n\nSign in, see an empty dashboard, send one usage event end to end.\n\n- web and api deployed, Clerk sign-in\n- `accounts`, `users`, `api_keys` tables\n- ingest one event into `usage_events`\n\n## M2 — Metering\n\n- worker aggregates usage\n- usage charts in web\n\n## M3 — Billing\n\n- monthly invoice runs via Stripe (test mode)\n- invoice emails\n\n## M4 — Hardening\n\n- idempotency, retries, alerts\n- launch checklist\n",
+              ),
+            1500,
+          ),
+        );
+      case "set_project_brief":
+        projects = projects.map((p) => (p.id === a.id ? { ...p, brief: a.brief } : p));
+        return null;
       case "current_user":
         return "dev";
       case "app_version":
@@ -223,6 +244,33 @@ export async function installDevMock() {
             resolve(text);
           }, 1200),
         );
+      case "plan_chat": {
+        if (!planChats[a.projectId]) {
+          const id = "plan-" + a.projectId;
+          planChats[a.projectId] = id;
+          chats.push({ id, projectId: "__plan__", title: "Plan", sessionId: null, createdAt: now, updatedAt: now });
+        }
+        return [planChats[a.projectId], null];
+      }
+      case "plan_versions":
+        return [...(planVersions[a.projectId] ?? [])].reverse().map(({ plan: _p, ...v }) => v);
+      case "plan_get": {
+        const list = planVersions[a.projectId] ?? [];
+        const v = a.version == null ? list[list.length - 1] : list.find((x) => x.version === a.version);
+        return v ? [v.version, v.plan] : null;
+      }
+      case "plan_save": {
+        const list = (planVersions[a.projectId] ??= []);
+        const last = list[list.length - 1];
+        const t = Date.now() / 1000;
+        if (a.amend && last && last.source === a.source && t - last.createdAt < 120) {
+          Object.assign(last, { plan: a.plan, title: a.title, createdAt: t });
+          return last.version;
+        }
+        const version = (last?.version ?? 0) + 1;
+        list.push({ version, title: a.title, changes: a.changes, plan: a.plan, source: a.source ?? null, createdAt: t });
+        return version;
+      }
       case "list_chats":
         return chats
           .filter((c) => c.projectId === a.projectId)
@@ -275,7 +323,7 @@ export async function installDevMock() {
       case "claude_status":
         return { available: true, path: "/mock/claude", version: "mock" };
       case "ask_start":
-        mockAnswer(a.request.askId, a.request.question);
+        mockAnswer(a.request.askId, a.request.question, a.request.context ?? "");
         return null;
       case "ask_cancel":
         return null;
@@ -355,10 +403,159 @@ const CANVAS_ANSWER = [
   "This keeps [api](strata:node/api) focused on orders and makes payments testable on their own.",
 ].join("\n");
 
+/** Planning: a first draft for an empty plan, afterwards small edits. */
+function planAnswer(context: string, question: string) {
+  const block = (o: unknown, lang = "strata-plan") => "```" + lang + "\n" + JSON.stringify(o, null, 2) + "\n```";
+  const empty = context.includes("## Current plan\nEmpty.");
+  if (empty && question.startsWith("Here's what I want to build")) {
+    return [
+      "Sounds good. A few questions decide the shape of the architecture:",
+      "",
+      block(
+        {
+          questions: [
+            { q: "Will users pay in the app?", options: ["Yes", "No", "Later"] },
+            { q: "Expected users in year one?", options: ["< 1k", "1k–50k", "50k+"] },
+            { q: "Any background work?", options: ["Emails & invoices", "Heavy processing", "Not sure"] },
+            { q: "Who builds it?", options: ["Just me", "Small team", "Several teams"] },
+          ],
+        },
+        "strata-questions",
+      ),
+    ].join("\n");
+  }
+  if (empty && /propose options/i.test(question)) {
+    const C = (id: string, name: string, type: string, tech: string[], resp: string) => ({ id, name, type, tech, resp });
+    const web = C("web", "web", "App", ["Next.js"], "Customer dashboard.");
+    const stripe = C("stripe", "Stripe", "External", ["Stripe"], "Payments.");
+    const pg = C("postgres", "postgres", "Database", ["Postgres 16"], "Primary store.");
+    return [
+      "Three shapes fit what you described. I recommend **API + worker**: invoice runs stay off the request path and it fits a small team. I drew it on the canvas; compare the others and switch if you like.",
+      "",
+      block(
+        {
+          options: [
+            {
+              id: "monolith", title: "Modular monolith", tagline: "One deployable with strict module boundaries.", complexity: 2,
+              pros: ["Fastest to ship", "One deploy, one log stream"], cons: ["Invoice runs compete with API traffic", "Scales all-or-nothing"],
+              plan: { components: [web, C("app", "app", "Service", ["Fastify"], "All backend modules."), pg, stripe], connections: [{ from: "web", to: "app", label: "REST", kind: "calls" }, { from: "app", to: "postgres", label: "SQL", kind: "data" }, { from: "app", to: "stripe", label: "REST", kind: "calls" }] },
+            },
+            {
+              id: "api-worker", title: "API + worker", recommended: true, tagline: "API stays fast; heavy work moves to a queue.", complexity: 3,
+              pros: ["Invoice runs off the request path", "Scale API and worker separately", "Fits a small team"], cons: ["Two deployables plus Redis", "Jobs need retries"],
+              plan: {
+                components: [web, C("api", "api", "Service", ["Fastify"], "Public REST API."), C("redis", "redis", "Queue", ["Redis", "BullMQ"], "Job queue."), C("worker", "worker", "Worker", ["Node", "BullMQ"], "Invoice runs and emails."), pg, stripe],
+                connections: [{ from: "web", to: "api", label: "REST", kind: "calls" }, { from: "api", to: "postgres", label: "SQL", kind: "data" }, { from: "api", to: "redis", label: "enqueue", kind: "queue" }, { from: "worker", to: "redis", label: "consume", kind: "queue" }, { from: "worker", to: "stripe", label: "REST", kind: "calls" }, { from: "worker", to: "postgres", label: "SQL", kind: "data" }],
+              },
+            },
+            {
+              id: "serverless", title: "Serverless", tagline: "Functions and managed services, no servers.", complexity: 4,
+              pros: ["Scales to zero", "Nothing to patch"], cons: ["Cold starts on the API", "Harder local debugging"],
+              plan: { components: [web, C("fn-api", "λ api", "Service", ["Lambda"], "API functions."), C("fn-jobs", "λ jobs", "Worker", ["Lambda"], "Scheduled jobs."), C("dynamo", "Dynamo", "Database", ["DynamoDB"], "Store."), stripe], connections: [{ from: "web", to: "fn-api", label: "HTTPS", kind: "calls" }, { from: "fn-api", to: "dynamo", label: "SDK", kind: "data" }, { from: "fn-jobs", to: "dynamo", label: "SDK", kind: "data" }, { from: "fn-jobs", to: "stripe", label: "REST", kind: "calls" }] },
+            },
+          ],
+        },
+        "strata-options",
+      ),
+    ].join("\n");
+  }
+  if (/data model/i.test(question)) {
+    const ids = [...context.matchAll(/"id":"([a-z0-9-]+)","name"/g)].map((m) => m[1]);
+    const api = ids.includes("api") ? "api" : ids[0];
+    const billing = ids.includes("worker") ? "worker" : ids.includes("billing") ? "billing" : api;
+    return [
+      "Here are the main tables. **api** owns accounts, users and keys; usage events and invoices belong to the billing side. One open question affects the invoice tables.",
+      "",
+      block({
+        title: "Plan the data model",
+        ops: [
+          { op: "table", table: { id: "accounts", name: "accounts", owner: api, columns: [{ name: "id", type: "uuid", pk: true }, { name: "name", type: "text" }, { name: "stripe_customer_id", type: "text" }] } },
+          { op: "table", table: { id: "users", name: "users", owner: api, columns: [{ name: "id", type: "uuid", pk: true }, { name: "account_id", type: "uuid", fk: "accounts" }, { name: "email", type: "text" }] } },
+          { op: "table", table: { id: "api_keys", name: "api_keys", owner: api, columns: [{ name: "id", type: "uuid", pk: true }, { name: "account_id", type: "uuid", fk: "accounts" }, { name: "hash", type: "text" }] } },
+          { op: "table", table: { id: "usage_events", name: "usage_events", owner: billing, columns: [{ name: "id", type: "bigint", pk: true }, { name: "account_id", type: "uuid", fk: "accounts" }, { name: "metric", type: "text" }, { name: "quantity", type: "int" }, { name: "at", type: "timestamptz" }] } },
+          { op: "table", table: { id: "invoices", name: "invoices", owner: billing, columns: [{ name: "id", type: "uuid", pk: true }, { name: "account_id", type: "uuid", fk: "accounts" }, { name: "total_cents", type: "int" }, { name: "status", type: "text" }] } },
+          { op: "decide", decision: { title: "Postgres as the single primary store", chosen: "Postgres 16", reason: "Relational billing data, one ops surface.", alts: ["MySQL", "DynamoDB"], links: ["postgres"] } },
+          { op: "ask", question: { text: "Do invoices need multi-currency at launch?", detail: "Affects invoices and the Stripe price setup.", links: [billing, "invoices"] } },
+        ],
+      }),
+    ].join("\n");
+  }
+  if (/resolve open question/i.test(question)) {
+    const id = question.match(/question (q\d+)/)?.[1] ?? "q1";
+    return [
+      "I'd launch with a single currency (USD) and keep a currency column so adding more later is a migration, not a redesign.",
+      "",
+      block({
+        title: "Single currency at launch",
+        ops: [
+          { op: "decide", decision: { title: "Single currency at launch", chosen: "USD only", reason: "Simpler Stripe prices; a currency column keeps the door open.", alts: ["Multi-currency from day one"], links: ["invoices"] } },
+          { op: "resolve", id },
+        ],
+      }),
+    ].join("\n");
+  }
+  if (empty) {
+    return [
+      "Here’s a first draft: one web app for customers, an API that owns accounts and usage, and Postgres as the single store. Stripe handles payments.",
+      "",
+      block({
+        title: "First draft",
+        plan: {
+          components: [
+            { id: "web", name: "web", type: "App", resp: "Customer dashboard: usage, invoices and API keys.", tech: ["Next.js", "Tailwind"], lives: "apps/web" },
+            { id: "api", name: "api", type: "Service", resp: "Public REST API and dashboard backend. Owns accounts, users and API keys.", tech: ["Fastify", "TypeScript"], lives: "services/api" },
+            { id: "postgres", name: "postgres", type: "Database", resp: "Primary store.", tech: ["Postgres 16"], lives: "infra/db" },
+            { id: "stripe", name: "Stripe", type: "External", resp: "Payments and payouts.", tech: ["Stripe"], lives: "Managed service" },
+            { id: "clerk", name: "Clerk", type: "External", resp: "Sign-in and organizations.", tech: ["Clerk"], lives: "Managed service" },
+          ],
+          connections: [
+            { from: "web", to: "api", label: "REST", kind: "calls" },
+            { from: "web", to: "clerk", label: "OIDC", kind: "uses" },
+            { from: "api", to: "postgres", label: "SQL", kind: "data" },
+            { from: "api", to: "stripe", label: "REST", kind: "calls" },
+          ],
+        },
+      }),
+      "",
+      "Next, we could move billing into its own service so Stripe stays out of the public API.",
+    ].join("\n");
+  }
+  if (!context.includes('"id":"billing"')) {
+    return [
+      "I split billing into its own **billing-service**: it meters usage and is the only component that talks to Stripe. The api calls it over REST.",
+      "",
+      block({
+        title: "Split billing out",
+        ops: [
+          { op: "add", component: { id: "billing", name: "billing-service", type: "Service", resp: "Meters usage, prices it and issues invoices. The only component that talks to Stripe.", tech: ["Fastify", "Stripe SDK"], lives: "services/billing" } },
+          { op: "connect", from: "api", to: "billing", label: "REST", kind: "calls" },
+          { op: "connect", from: "billing", to: "stripe", label: "REST + hooks", kind: "calls" },
+          { op: "connect", from: "billing", to: "postgres", label: "SQL", kind: "data" },
+          { op: "disconnect", from: "api", to: "stripe" },
+          { op: "update", id: "api", set: { resp: "Public REST API and dashboard backend. Owns accounts, users and API keys; asks billing-service for invoices." } },
+        ],
+      }),
+    ].join("\n");
+  }
+  return [
+    "Invoice runs shouldn’t block requests, so I added a **worker** with a Redis queue between billing-service and the worker.",
+    "",
+    block({
+      title: "Add worker for invoice runs",
+      ops: [
+        { op: "add", component: { id: "redis", name: "redis", type: "Queue", resp: "Job queue between billing-service and worker.", tech: ["Redis", "BullMQ"], lives: "infra/redis" } },
+        { op: "add", component: { id: "worker", name: "worker", type: "Worker", resp: "Runs monthly invoice jobs and sends email.", tech: ["Node", "BullMQ"], lives: "services/worker" } },
+        { op: "connect", from: "billing", to: "redis", label: "enqueue", kind: "queue" },
+        { op: "connect", from: "worker", to: "redis", label: "consume", kind: "queue" },
+      ],
+    }),
+  ].join("\n");
+}
+
 /** Streams a canned answer the way the Claude CLI does, to exercise the Ask panel. */
-function mockAnswer(askId: string, question = "") {
+function mockAnswer(askId: string, question = "", context = "") {
   const ev = (event: unknown) => emit("ask-event", { askId, event });
-  const answer = /canvas|architecture|draw|improve/i.test(question) ? CANVAS_ANSWER :
+  const answer = context.startsWith("# Strata planning") ? planAnswer(context, question) : /canvas|architecture|draw|improve/i.test(question) ? CANVAS_ANSWER :
     "Checkout spans two services and two tables:\n\n1. The Pay button in [page.tsx](strata:file/web-app/app/checkout/page.tsx) calls [api](strata:node/api) through `lib/graphql/client.ts`.\n2. [checkout.service.ts](strata:file/api/src/services/checkout.service.ts) validates the cart, prices it with `quote()` and writes a pending order via `src/db/orders.repo.ts`.\n3. Payment goes to **Stripe** through `PaymentClient`.\n\nThe order is stored in the [orders](strata:table/api/orders) table.";
   const steps = ["Reading app/checkout/page.tsx", "Searching for createCheckoutSession", "Reading src/services/checkout.service.ts"];
   let t = 0;

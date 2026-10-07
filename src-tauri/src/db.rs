@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS chats (
   title       TEXT NOT NULL,
   session_id  TEXT,
   created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'chat'  -- chat | plan (the one planning conversation of a project)
 );
 CREATE TABLE IF NOT EXISTS chat_messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,6 +86,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role        TEXT NOT NULL,      -- user | assistant
   content     TEXT NOT NULL,      -- JSON: { text, activity?, error?, cost? }
   created_at  INTEGER NOT NULL
+);
+
+-- The architecture plan of a project: every change is a new version (the latest is current).
+CREATE TABLE IF NOT EXISTS plan_versions (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  version     INTEGER NOT NULL,
+  title       TEXT NOT NULL,
+  changes     TEXT NOT NULL,      -- short summary like "+2 ~1 −1"
+  plan        TEXT NOT NULL,      -- JSON: { components, connections }
+  source      TEXT,               -- what produced it: hash of a Claude edit, "manual:<id>", "restore:<n>"
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (project_id, version)
 );
 
 -- Packages a repo imports, and whether its package.json declares them.
@@ -122,6 +135,10 @@ pub struct Project {
     /// off | click | auto (click + pre-generate components and tables)
     pub ai_mode: String,
     pub ai_model: String,
+    /// What a planned project is about: { idea, stack, hosting, scale, team, services }.
+    pub brief: Option<serde_json::Value>,
+    /// Whether the project has an architecture plan.
+    pub has_plan: bool,
     /// Best logo found in the project's repos, as a data URL.
     pub logo: Option<String>,
     pub repos: Vec<Repo>,
@@ -146,11 +163,15 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         }
     }
     // AI summaries: off until the user turns them on for a project.
-    for col in ["ai_mode TEXT NOT NULL DEFAULT 'off'", "ai_model TEXT NOT NULL DEFAULT 'haiku'"] {
+    // brief: the idea and constraints of a project planned from scratch (JSON).
+    for col in ["ai_mode TEXT NOT NULL DEFAULT 'off'", "ai_model TEXT NOT NULL DEFAULT 'haiku'", "brief TEXT"] {
         let name = col.split(' ').next().unwrap();
         if !has_column(conn, "projects", name)? {
             conn.execute_batch(&format!("ALTER TABLE projects ADD COLUMN {col}"))?;
         }
+    }
+    if !has_column(conn, "chats", "kind")? {
+        conn.execute_batch("ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'")?;
     }
     if !has_column(conn, "edges", "repo_id")? {
         // Only ever held scanner output, which a rescan rebuilds.
@@ -211,15 +232,21 @@ fn repos_for(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Repo>>
 }
 
 pub fn list_projects(conn: &Connection) -> rusqlite::Result<Vec<Project>> {
-    let mut stmt = conn.prepare("SELECT id, name, color, created_at, ai_mode, ai_model FROM projects ORDER BY created_at")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, color, created_at, ai_mode, ai_model, brief, EXISTS (SELECT 1 FROM plan_versions v WHERE v.project_id = projects.id)
+         FROM projects ORDER BY created_at",
+    )?;
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, bool>(7)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     rows.into_iter()
-        .map(|(id, name, color, created_at, ai_mode, ai_model)| {
+        .map(|(id, name, color, created_at, ai_mode, ai_model, brief, has_plan)| {
             let repos = repos_for(conn, &id)?;
             let logo = project_logo(conn, &id)?;
-            Ok(Project { id, name, color, created_at, ai_mode, ai_model, logo, repos })
+            let brief = brief.and_then(|b| serde_json::from_str(&b).ok());
+            Ok(Project { id, name, color, created_at, ai_mode, ai_model, brief, has_plan, logo, repos })
         })
         .collect()
 }
@@ -245,6 +272,11 @@ pub fn create_project(conn: &Connection, name: &str, color: &str) -> rusqlite::R
 
 pub fn update_project(conn: &Connection, id: &str, name: &str, color: &str) -> rusqlite::Result<()> {
     conn.execute("UPDATE projects SET name = ?2, color = ?3 WHERE id = ?1", params![id, name.trim(), color])?;
+    Ok(())
+}
+
+pub fn set_project_brief(conn: &Connection, id: &str, brief: &serde_json::Value) -> rusqlite::Result<()> {
+    conn.execute("UPDATE projects SET brief = ?2 WHERE id = ?1", params![id, brief.to_string()])?;
     Ok(())
 }
 
@@ -527,7 +559,7 @@ pub fn list_chats(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<C
         "SELECT c.id, c.project_id, c.title, c.session_id, c.created_at, c.updated_at,
                 (SELECT COUNT(*) FROM chat_messages m WHERE m.chat_id = c.id),
                 (SELECT m.content FROM chat_messages m WHERE m.chat_id = c.id AND m.role = 'assistant' ORDER BY m.id DESC LIMIT 1)
-         FROM chats c WHERE c.project_id = ?1 ORDER BY c.updated_at DESC",
+         FROM chats c WHERE c.project_id = ?1 AND c.kind = 'chat' ORDER BY c.updated_at DESC",
     )?;
     let rows = stmt
         .query_map([project_id], |r| {
@@ -547,6 +579,77 @@ pub fn create_chat(conn: &Connection, project_id: &str, title: &str) -> rusqlite
     let t = now();
     conn.execute("INSERT INTO chats (id, project_id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)", params![id, project_id, title, t])?;
     Ok(id)
+}
+
+/// The project's planning conversation, created on first use. Returns (id, Claude session).
+pub fn plan_chat(conn: &Connection, project_id: &str) -> rusqlite::Result<(String, Option<String>)> {
+    let found = conn
+        .query_row("SELECT id, session_id FROM chats WHERE project_id = ?1 AND kind = 'plan'", [project_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    if let Some(f) = found {
+        return Ok(f);
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let t = now();
+    conn.execute("INSERT INTO chats (id, project_id, title, created_at, updated_at, kind) VALUES (?1, ?2, 'Plan', ?3, ?3, 'plan')", params![id, project_id, t])?;
+    Ok((id, None))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanVersion {
+    pub version: i64,
+    pub title: String,
+    pub changes: String,
+    pub source: Option<String>,
+    pub created_at: i64,
+}
+
+/// Versions of a project's plan, newest first (without the plan bodies).
+pub fn plan_versions(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<PlanVersion>> {
+    let mut stmt = conn.prepare("SELECT version, title, changes, source, created_at FROM plan_versions WHERE project_id = ?1 ORDER BY version DESC")?;
+    let rows = stmt
+        .query_map([project_id], |r| Ok(PlanVersion { version: r.get(0)?, title: r.get(1)?, changes: r.get(2)?, source: r.get(3)?, created_at: r.get(4)? }))?
+        .collect();
+    rows
+}
+
+/// One version's plan (the latest when `version` is None).
+pub fn plan_get(conn: &Connection, project_id: &str, version: Option<i64>) -> rusqlite::Result<Option<(i64, serde_json::Value)>> {
+    let row: Option<(i64, String)> = match version {
+        Some(v) => conn.query_row("SELECT version, plan FROM plan_versions WHERE project_id = ?1 AND version = ?2", params![project_id, v], |r| Ok((r.get(0)?, r.get(1)?))).optional()?,
+        None => conn
+            .query_row("SELECT version, plan FROM plan_versions WHERE project_id = ?1 ORDER BY version DESC LIMIT 1", [project_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?,
+    };
+    Ok(row.map(|(v, p)| (v, serde_json::from_str(&p).unwrap_or(serde_json::Value::Null))))
+}
+
+/// Saves a new version and returns its number. With `amend`, an edit from the same `source`
+/// right after the latest version replaces it instead (typing in the inspector shouldn't
+/// produce a version per keystroke).
+pub fn plan_save(conn: &Connection, project_id: &str, plan: &serde_json::Value, title: &str, changes: &str, source: Option<&str>, amend: bool) -> rusqlite::Result<i64> {
+    let t = now();
+    if amend {
+        let latest: Option<(i64, Option<String>, i64)> = conn
+            .query_row("SELECT version, source, created_at FROM plan_versions WHERE project_id = ?1 ORDER BY version DESC LIMIT 1", [project_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        if let Some((v, Some(src), at)) = latest {
+            if Some(src.as_str()) == source && t - at < 120 {
+                conn.execute(
+                    "UPDATE plan_versions SET plan = ?3, title = ?4, created_at = ?5 WHERE project_id = ?1 AND version = ?2",
+                    params![project_id, v, plan.to_string(), title, t],
+                )?;
+                return Ok(v);
+            }
+        }
+    }
+    let next: i64 = conn.query_row("SELECT COALESCE(MAX(version), 0) + 1 FROM plan_versions WHERE project_id = ?1", [project_id], |r| r.get(0))?;
+    conn.execute(
+        "INSERT INTO plan_versions (project_id, version, title, changes, plan, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![project_id, next, title, changes, plan.to_string(), source, t],
+    )?;
+    Ok(next)
 }
 
 pub fn chat_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<ChatMessage>> {
@@ -717,6 +820,32 @@ mod tests {
         assert_eq!((s[0].hash.as_str(), s[0].text.as_str()), ("h2", "Second."));
         assert_eq!(clear_summaries(&conn, &p).unwrap(), 1);
         delete_project(&conn, &p).unwrap();
+    }
+
+    #[test]
+    fn plan_versions_and_amend() {
+        let conn = mem();
+        let p = create_project(&conn, "P", "#fff").unwrap();
+        assert!(plan_get(&conn, &p, None).unwrap().is_none());
+        assert!(!list_projects(&conn).unwrap()[0].has_plan);
+        set_project_brief(&conn, &p, &serde_json::json!({ "idea": "Usage billing" })).unwrap();
+        let a = serde_json::json!({ "components": [{ "id": "api" }], "connections": [] });
+        let b = serde_json::json!({ "components": [{ "id": "api" }, { "id": "web" }], "connections": [] });
+        assert_eq!(plan_save(&conn, &p, &a, "First draft", "+1", Some("claude:1"), false).unwrap(), 1);
+        assert_eq!(plan_save(&conn, &p, &b, "Edited api", "~1", Some("manual:api"), true).unwrap(), 2, "amend only replaces the same source");
+        assert_eq!(plan_save(&conn, &p, &a, "Edited api", "~1", Some("manual:api"), true).unwrap(), 2, "same source right after: amended");
+        assert_eq!(plan_get(&conn, &p, None).unwrap().unwrap(), (2, a.clone()));
+        let proj = &list_projects(&conn).unwrap()[0];
+        assert!(proj.has_plan);
+        assert_eq!(proj.brief.as_ref().unwrap()["idea"], "Usage billing");
+        assert_eq!(plan_get(&conn, &p, Some(1)).unwrap().unwrap().0, 1);
+        let vs = plan_versions(&conn, &p).unwrap();
+        assert_eq!(vs.iter().map(|v| v.version).collect::<Vec<_>>(), vec![2, 1]);
+        let (chat, _) = plan_chat(&conn, &p).unwrap();
+        assert_eq!(plan_chat(&conn, &p).unwrap().0, chat, "one plan chat per project");
+        assert!(list_chats(&conn, &p).unwrap().is_empty(), "the plan chat isn't listed with the saved chats");
+        delete_project(&conn, &p).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM plan_versions", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Project, Repo, ScanFinished, ScanProgress, api, pickFolders } from "./api";
+import { Project, Repo, ScanFinished, ScanProgress, api, pickFolders, type PlanBrief } from "./api";
 import { Route } from "./routes";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -169,6 +169,13 @@ export default function App() {
     return null;
   }
 
+  const planProject = async (name: string, color: string, brief: PlanBrief) => {
+    const id = await api.createProject(name, color, []);
+    await api.setProjectBrief(id, brief);
+    await reload();
+    setRoute({ page: "project", id, lens: "plan" });
+  };
+
   // Without any project, onboarding takes the whole window.
   if (projects.length === 0) {
     return (
@@ -182,6 +189,7 @@ export default function App() {
             await reload();
             setRoute({ page: "project", id, lens: "home" });
           }}
+          onPlan={planProject}
         />
       </div>
     );
@@ -246,6 +254,7 @@ export default function App() {
               await reload();
               setRoute({ page: "project", id, lens: "home" });
             }}
+            onPlan={planProject}
           />
         )}
 

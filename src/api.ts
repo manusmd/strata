@@ -34,6 +34,9 @@ export type ScanFinished = { repoId: string; error: string | null };
 
 export type AiMode = "off" | "click" | "auto";
 
+/** What the "Plan from scratch" form collects. */
+export type PlanBrief = { idea: string; stack?: string[]; hosting?: string[]; scale?: string; team?: string; services?: string[] };
+
 export type Project = {
   id: string;
   name: string;
@@ -43,6 +46,9 @@ export type Project = {
   aiModel: string;
   /** Best logo found in the project's repos (data URL), if any. */
   logo?: string | null;
+  /** The idea and constraints of a project planned from scratch. */
+  brief?: PlanBrief | null;
+  hasPlan?: boolean;
   repos: Repo[];
 };
 
@@ -64,6 +70,7 @@ export const api = {
   removeRepo: (projectId: string, repoId: string) => invoke<void>("remove_repo", { projectId, repoId }),
   currentUser: () => invoke<string>("current_user"),
   setProjectAi: (id: string, mode: AiMode, model: string) => invoke<void>("set_project_ai", { id, mode, model }),
+  setProjectBrief: (id: string, brief: PlanBrief) => invoke<void>("set_project_brief", { id, brief }),
   projectSummaries: (projectId: string) => invoke<Summary[]>("project_summaries", { projectId }),
   clearSummaries: (projectId: string) => invoke<number>("clear_summaries", { projectId }),
   summarize: (request: SummaryRequest) => invoke<string>("summarize", { request }),

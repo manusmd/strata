@@ -7,6 +7,7 @@ import { ArchMap } from "../map/ArchMap";
 import type { WorkspacePackage } from "../map/archModel";
 import { AskPanel } from "../ask/AskPanel";
 import { ProjectHome } from "../home/ProjectHome";
+import { PlanView } from "../plan/PlanView";
 import { focusOn, type Focus } from "../map/focus";
 import { AiContext } from "../summary/SummarySection";
 import { summaryStore, useSummaries } from "../summary/store";
@@ -42,7 +43,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
 
   return (
     <>
-      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
+      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" || lens === "plan" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
         {LEVELS.map((l) => (
           <button key={l} className={`level-btn ${l === level ? "on" : ""}`} onClick={() => onLevel(l)}>
             {l}
@@ -52,7 +53,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
       <div className="spacer" data-tauri-drag-region />
       <div className="seg">
         {LENSES.map((l) => (
-          <button key={l.id} className={`${lens === l.id ? "on" : ""} ${ready || l.id === "home" ? "" : "disabled-ui"}`} title={l.id === "home" ? undefined : title} onClick={() => setLens(l.id)}>
+          <button key={l.id} className={`${lens === l.id ? "on" : ""} ${ready || l.id === "home" || l.id === "plan" ? "" : "disabled-ui"}`} title={l.id === "home" || l.id === "plan" ? undefined : title} onClick={() => setLens(l.id)}>
             <span className="dot" style={{ background: l.color }} />
             {l.label}
           </button>
@@ -64,7 +65,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
           {isScanning(project) ? "Scanning…" : "↻ Rescan"}
         </button>
       )}
-      {ready && lens !== "home" && (
+      {ready && lens !== "home" && lens !== "plan" && (
         <button className={`btn small ask-toggle ${askOpen ? "on" : ""}`} onClick={onToggleAsk} title="Ask Strata (⌘J)">
           <span style={{ color: "var(--arch)" }}>✦</span> Ask Strata
         </button>
@@ -218,6 +219,13 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump]);
 
+  // Planned projects without code open on their plan.
+  const planned = project.repos.length === 0 && (!!project.hasPlan || !!project.brief);
+  useEffect(() => {
+    if (planned && lens === "home") setLens("plan");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planned, lens]);
+
   useEffect(() => {
     api.workspacePackages().then((w) => setWorkspace(w ?? [])).catch(() => setWorkspace([]));
   }, [scanKey, allProjects.length]);
@@ -238,6 +246,8 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, scanKey]);
 
+  if (lens === "plan" || (planned && lens === "home")) return <PlanView project={project} graph={graph} workspace={workspace} onOpen={openRef} onAddRepo={onAddRepoPath} />;
+
   if (project.repos.length === 0) {
     const suggestions = reusable(project, allProjects);
     return (
@@ -248,11 +258,14 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           </div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginTop: 18 }}>{project.name} has no repos yet</div>
           <div className="muted" style={{ marginTop: 6, lineHeight: 1.5 }}>
-            Add the repositories that make up this system. Strata scans them and draws the first map.
+            Add the repositories that make up this system, or plan it with Claude first: describe the idea and Strata draws the architecture.
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
             <button className="btn primary" onClick={onAddFolder}>
               Add local folder
+            </button>
+            <button className="btn" onClick={() => setLens("plan")}>
+              <span style={{ color: "var(--arch)" }}>✦</span> Plan it with Claude
             </button>
           </div>
           {suggestions.length > 0 && (

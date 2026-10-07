@@ -6,6 +6,7 @@ mod ask;
 mod summary;
 mod logo;
 mod update;
+mod docs;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -195,6 +196,22 @@ async fn organize(app: AppHandle, project_id: String, lens: String, hash: String
 }
 
 #[tauri::command]
+fn docs_existing(dir: String, paths: Vec<String>) -> Vec<String> {
+    docs::existing(&dir, &paths)
+}
+
+#[tauri::command]
+fn write_docs(dir: String, files: Vec<docs::DocFile>, git: bool) -> CmdResult<usize> {
+    docs::write(&dir, &files, git)
+}
+
+/// Drafts ROADMAP.md for a plan with a tool-less Claude call.
+#[tauri::command]
+async fn draft_roadmap(prompt: String, model: String) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || summary::roadmap(&prompt, &model)).await.map_err(err)?
+}
+
+#[tauri::command]
 fn list_chats(db: State<Db>, project_id: String) -> CmdResult<Vec<db::Chat>> {
     db::list_chats(&db.0.lock().unwrap(), &project_id).map_err(err)
 }
@@ -227,6 +244,31 @@ fn delete_chat(db: State<Db>, chat_id: String) -> CmdResult<()> {
 #[tauri::command]
 fn current_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "you".into())
+}
+
+#[tauri::command]
+fn set_project_brief(db: State<Db>, id: String, brief: serde_json::Value) -> CmdResult<()> {
+    db::set_project_brief(&db.0.lock().unwrap(), &id, &brief).map_err(err)
+}
+
+#[tauri::command]
+fn plan_chat(db: State<Db>, project_id: String) -> CmdResult<(String, Option<String>)> {
+    db::plan_chat(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+#[tauri::command]
+fn plan_versions(db: State<Db>, project_id: String) -> CmdResult<Vec<db::PlanVersion>> {
+    db::plan_versions(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+#[tauri::command]
+fn plan_get(db: State<Db>, project_id: String, version: Option<i64>) -> CmdResult<Option<(i64, serde_json::Value)>> {
+    db::plan_get(&db.0.lock().unwrap(), &project_id, version).map_err(err)
+}
+
+#[tauri::command]
+fn plan_save(db: State<Db>, project_id: String, plan: serde_json::Value, title: String, changes: String, source: Option<String>, amend: bool) -> CmdResult<i64> {
+    db::plan_save(&db.0.lock().unwrap(), &project_id, &plan, &title, &changes, source.as_deref(), amend).map_err(err)
 }
 
 #[tauri::command]
@@ -293,6 +335,14 @@ pub fn run() {
             update_chat,
             delete_chat,
             current_user,
+            set_project_brief,
+            docs_existing,
+            write_docs,
+            draft_roadmap,
+            plan_chat,
+            plan_versions,
+            plan_get,
+            plan_save,
             app_version,
             check_update,
             install_update

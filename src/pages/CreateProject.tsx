@@ -1,12 +1,22 @@
 import { useState } from "react";
-import { PROJECT_COLORS, initials, pickFolders, shortPath } from "../api";
+import { PROJECT_COLORS, initials, pickFolders, shortPath, type PlanBrief } from "../api";
+import { NewProjectChoice, PlanForm } from "./NewProjectChoice";
 import { StrataLogo } from "../components/StrataLogo";
 
 type Props = {
   first: boolean;
   onCancel: (() => void) | null;
   onCreate: (name: string, color: string, paths: string[]) => Promise<void>;
+  /** "Plan from scratch": a project without repos, started from a brief. */
+  onPlan: (name: string, color: string, brief: PlanBrief) => Promise<void>;
 };
+
+export function CreateProject(props: Props) {
+  const [mode, setMode] = useState<"choose" | "map" | "plan">("choose");
+  if (mode === "choose") return <NewProjectChoice first={props.first} onMap={() => setMode("map")} onPlan={() => setMode("plan")} onCancel={props.onCancel} />;
+  if (mode === "plan") return <PlanForm onBack={() => setMode("choose")} onCreate={props.onPlan} />;
+  return <MapProject {...props} onCancel={() => setMode("choose")} />;
+}
 
 const STEPS = [
   ["Name", "Give the system a name and an icon."],
@@ -14,7 +24,7 @@ const STEPS = [
   ["Scan", "We parse, link and summarise."],
 ];
 
-export function CreateProject({ first, onCancel, onCreate }: Props) {
+function MapProject({ first, onCancel, onCreate }: Props) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [color, setColor] = useState(PROJECT_COLORS[0]);
