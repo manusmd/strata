@@ -312,6 +312,11 @@ fn git_remote(path: &Path) -> Option<String> {
 
 /// Adds a local folder to a project. A folder that is already known in the
 /// workspace is reused, so one repo can live in several projects.
+pub fn set_repo_remote(conn: &Connection, repo_id: &str, remote: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE repos SET remote = ?1 WHERE id = ?2", params![remote, repo_id])?;
+    Ok(())
+}
+
 pub fn add_local_repo(conn: &Connection, project_id: &str, path: &str) -> Result<String, String> {
     let path = PathBuf::from(path);
     if !path.is_dir() {

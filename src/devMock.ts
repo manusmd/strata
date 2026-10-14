@@ -393,6 +393,13 @@ export async function installDevMock() {
         projects = projects.map((p) => (p.id === a.projectId && !p.repos.some((x) => x.id === r.id) ? { ...p, repos: [...p.repos, r] } : p));
         return r.id;
       }
+      case "add_github_repo": {
+        const m = String(a.url).match(/github\.com[/:]([\w.-]+)\/([\w-]+(?:\.(?!git\b)[\w-]+)*)/) ?? String(a.url).trim().match(/^([\w.-]+)\/([\w.-]+)$/);
+        if (!m) throw new Error(`“${a.url}” doesn't look like a GitHub repo. Paste a link like https://github.com/owner/repo.`);
+        const r = { ...repo("r" + Math.random().toString(36).slice(2, 7), m[2], `/mock/github/${m[1]}/${m[2]}`, `github.com/${m[1]}/${m[2]}`), scanStatus: "scanning" as const };
+        projects = projects.map((p) => (p.id === a.projectId ? { ...p, repos: [...p.repos, r] } : p));
+        return r.id;
+      }
       case "remove_repo":
         projects = projects.map((p) => (p.id === a.projectId ? { ...p, repos: p.repos.filter((r) => r.id !== a.repoId) } : p));
         return null;

@@ -7,6 +7,7 @@ mod summary;
 mod logo;
 mod update;
 mod docs;
+mod github;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -71,9 +72,30 @@ fn add_repo(db: State<Db>, project_id: String, path: String) -> CmdResult<String
     db::add_local_repo(&db.0.lock().unwrap(), &project_id, &path)
 }
 
+/// Adds a public GitHub repo: it shows up right away and is cloned and scanned in the background.
+#[tauri::command]
+fn add_github_repo(app: AppHandle, db: State<Db>, project_id: String, url: String) -> CmdResult<String> {
+    let (owner, name) = github::parse(&url)?;
+    let path = github::dir(&github_root(&app)?, &owner, &name);
+    std::fs::create_dir_all(&path).map_err(err)?;
+    let repo_id = {
+        let conn = db.0.lock().unwrap();
+        let id = db::add_local_repo(&conn, &project_id, &path.to_string_lossy())?;
+        db::set_repo_remote(&conn, &id, &format!("github.com/{owner}/{name}")).map_err(err)?;
+        id
+    };
+    spawn_scan(app, vec![repo_id.clone()]);
+    Ok(repo_id)
+}
+
 #[tauri::command]
 fn remove_repo(db: State<Db>, project_id: String, repo_id: String) -> CmdResult<()> {
     db::remove_repo(&db.0.lock().unwrap(), &project_id, &repo_id).map_err(err)
+}
+
+/// Where Strata keeps its clones of GitHub repos.
+fn github_root(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(err)?.join("github"))
 }
 
 fn scan_one(app: &AppHandle, repo_id: &str) -> Result<(), String> {
@@ -84,6 +106,11 @@ fn scan_one(app: &AppHandle, repo_id: &str) -> Result<(), String> {
         PathBuf::from(db::repo_path(&conn, repo_id).map_err(err)?)
     };
     let _ = app.emit("scan-progress", ScanProgress { repo_id: repo_id.into(), done: 0, total: 0 });
+
+    // A GitHub repo is cloned on its first scan and moved to the latest commit on every rescan.
+    if let Some((owner, name)) = github_root(app).ok().and_then(|root| github::cloned(&root, &path)) {
+        github::sync(&path, &owner, &name)?;
+    }
 
     // Parsing happens without holding the database lock; only saving needs it.
     let result = scanner::scan_repo(repo_id, &path, |done, total| {
@@ -330,6 +357,7 @@ pub fn run() {
             create_project,
             update_project,
             delete_project,
+            add_github_repo,
             add_repo,
             remove_repo,
             scan_project,

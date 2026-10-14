@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PROJECT_COLORS, initials, pickFolders, shortPath, type PlanBrief } from "../api";
+import { looksLikeGithub } from "../components/AddRepoDialog";
 import { NewProjectChoice, PlanForm } from "./NewProjectChoice";
 import { StrataLogo } from "../components/StrataLogo";
 
@@ -31,6 +32,17 @@ function MapProject({ first, onCancel, onCreate }: Props) {
   const [paths, setPaths] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [ghOpen, setGhOpen] = useState(false);
+  const [gh, setGh] = useState("");
+  const addGithub = () => {
+    if (!looksLikeGithub(gh)) return setError("Paste a GitHub link like https://github.com/owner/repo.");
+    const url = gh.trim();
+    setPaths((cur) => (cur.includes(url) ? cur : [...cur, url]));
+    setGh("");
+    setGhOpen(false);
+    setError(null);
+  };
 
   async function addFolders() {
     const picked = await pickFolders();
@@ -133,10 +145,10 @@ function MapProject({ first, onCancel, onCreate }: Props) {
               <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
                 {paths.map((p) => (
                   <div key={p} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
-                    <span className="chip" style={{ height: 20, fontSize: 10.5 }}>DIR</span>
-                    <span className="mono" style={{ fontSize: 12.5 }}>{p.split("/").pop()}</span>
+                    <span className="chip" style={{ height: 20, fontSize: 10.5 }}>{p.startsWith("/") ? "DIR" : "GH"}</span>
+                    <span className="mono" style={{ fontSize: 12.5 }}>{p.startsWith("/") ? p.split("/").pop() : p.replace(/^.*github\.com[/:]/, "").replace(/\.git$/, "").split("/").slice(0, 2).join("/")}</span>
                     <span className="faint mono" style={{ fontSize: 11.5, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {shortPath(p)}
+                      {p.startsWith("/") ? shortPath(p) : "cloned from GitHub"}
                     </span>
                     <button className="icon-btn" title="Remove" onClick={() => setPaths((cur) => cur.filter((x) => x !== p))}>
                       ×
@@ -150,6 +162,29 @@ function MapProject({ first, onCancel, onCreate }: Props) {
                 <button className="btn small" onClick={addFolders}>
                   + Local folder
                 </button>
+                {ghOpen ? (
+                  <>
+                    <input
+                      autoFocus
+                      className="add-repo-input mono"
+                      style={{ height: 30 }}
+                      placeholder="https://github.com/owner/repo"
+                      value={gh}
+                      onChange={(e) => setGh(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addGithub();
+                        if (e.key === "Escape") setGhOpen(false);
+                      }}
+                    />
+                    <button className="btn small" disabled={!gh.trim()} onClick={addGithub}>
+                      Add
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn small" onClick={() => setGhOpen(true)}>
+                    + GitHub repo
+                  </button>
+                )}
               </div>
 
               {error && <div className="error-banner">{error}</div>}

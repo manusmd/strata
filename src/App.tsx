@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Project, Repo, ScanFinished, ScanProgress, api, pickFolders, type PlanBrief } from "./api";
 import { LENSES, Route } from "./routes";
 import { Sidebar } from "./components/Sidebar";
+import { AddRepoDialog } from "./components/AddRepoDialog";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { CreateProject } from "./pages/CreateProject";
 import { ProjectToolbar, ProjectView, type Progress } from "./pages/ProjectView";
@@ -131,7 +132,7 @@ export default function App() {
     [reload],
   );
 
-  const addFolders = useCallback(
+  const pickLocal = useCallback(
     async (projectId: string) => {
       const paths = await pickFolders();
       if (paths.length)
@@ -141,6 +142,19 @@ export default function App() {
     },
     [act],
   );
+  // A new project from repos: local folders by path, GitHub repos by link (cloned in the background).
+  const createMapped = async (name: string, color: string, repos: string[]) => {
+    const local = repos.filter((r) => r.startsWith("/"));
+    const github = repos.filter((r) => !r.startsWith("/"));
+    const id = await api.createProject(name, color, local);
+    if (local.length) await api.scanProject(id);
+    for (const url of github) await api.addGithubRepo(id, url);
+    await reload();
+    setRoute({ page: "project", id, lens: "home" });
+  };
+  // "Add repo" asks: a local folder or a public GitHub repo.
+  const [addRepoFor, setAddRepoFor] = useState<string | null>(null);
+  const addFolders = useCallback((projectId: string) => setAddRepoFor(projectId), []);
 
   const pick = (item: PaletteItem, query: string) => {
     setPaletteOpen(false);
@@ -189,12 +203,7 @@ export default function App() {
         <CreateProject
           first
           onCancel={null}
-          onCreate={async (name, color, paths) => {
-            const id = await api.createProject(name, color, paths);
-            if (paths.length) await api.scanProject(id);
-            await reload();
-            setRoute({ page: "project", id, lens: "home" });
-          }}
+          onCreate={createMapped}
           onPlan={planProject}
         />
       </div>
@@ -257,12 +266,7 @@ export default function App() {
           <CreateProject
             first={false}
             onCancel={() => setRoute({ page: "projects" })}
-            onCreate={async (name, color, paths) => {
-              const id = await api.createProject(name, color, paths);
-              if (paths.length) await api.scanProject(id);
-              await reload();
-              setRoute({ page: "project", id, lens: "home" });
-            }}
+            onCreate={createMapped}
             onPlan={planProject}
           />
         )}
@@ -313,6 +317,16 @@ export default function App() {
         )}
       </main>
       <UpdateCard />
+      {addRepoFor && (
+        <AddRepoDialog
+          onClose={() => setAddRepoFor(null)}
+          onLocal={() => pickLocal(addRepoFor)}
+          onGithub={async (url) => {
+            await api.addGithubRepo(addRepoFor, url);
+            await reload();
+          }}
+        />
+      )}
       {paletteOpen && (
         <Palette
           projects={projects}

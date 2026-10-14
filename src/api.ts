@@ -63,6 +63,8 @@ export const api = {
   updateProject: (id: string, name: string, color: string) => invoke<void>("update_project", { id, name, color }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
   addRepo: (projectId: string, path: string) => invoke<string>("add_repo", { projectId, path }),
+  /** Clones and scans in the background; the repo shows up right away. */
+  addGithubRepo: (projectId: string, url: string) => invoke<string>("add_github_repo", { projectId, url }),
   scanProject: (projectId: string) => invoke<void>("scan_project", { projectId }),
   scanRepo: (repoId: string) => invoke<void>("scan_repo", { repoId }),
   getGraph: (projectId: string) => invoke<Graph>("get_graph", { projectId }),
