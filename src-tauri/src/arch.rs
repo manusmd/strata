@@ -22,6 +22,8 @@ pub struct Unit {
     pub has_bin: bool,
     /// Ports from scripts (`-p 3002`, `PORT=4000`) and from code that calls `.listen(...)`.
     pub ports: Vec<u16>,
+    /// package.json "description": what the package says it is for.
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -68,6 +70,7 @@ pub fn unit_from_manifest(dir: &str, manifest: &Value) -> Unit {
         scripts,
         has_bin: manifest.get("bin").is_some(),
         ports: ports.into_iter().collect(),
+        description: manifest.get("description").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(|d| d.chars().take(200).collect()),
     }
 }
 

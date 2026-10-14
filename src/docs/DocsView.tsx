@@ -772,7 +772,7 @@ function FlowSteps({ ctx, def, blocks, chipProps, placeholder, prose, active, se
       </div>
       <div className="docs-steps">
         {steps.map((id, i) => {
-          const n = ctx.arch.byId.get(id);
+          const n = ctx.cv.byId.get(id);
           const b = blocks.find((x) => x.key === `step:${i}`);
           const edge = i < steps.length - 1 ? edgeBetween(ctx, id, steps[i + 1]) : undefined;
           const on = active === i;

@@ -616,7 +616,7 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
     let mut units: Vec<arch::Unit> = manifests.iter().map(|(dir, m)| arch::unit_from_manifest(&rel_string(dir), m)).collect();
     if units.is_empty() {
         let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "root".into());
-        units.push(arch::Unit { dir: String::new(), name, deps: vec![], dev_deps: vec![], scripts: Default::default(), has_bin: false, ports: vec![] });
+        units.push(arch::Unit { dir: String::new(), name, deps: vec![], dev_deps: vec![], scripts: Default::default(), has_bin: false, ports: vec![], description: None });
     }
     // Deepest unit whose folder contains the file.
     let unit_of = |path: &str| -> usize {
@@ -749,7 +749,7 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
             path: Some(u.dir.clone()),
             parent_id: None,
             meta: json!({
-                "deps": u.deps, "devDeps": u.dev_deps, "scripts": u.scripts, "hasBin": u.has_bin, "ports": u.ports,
+                "deps": u.deps, "devDeps": u.dev_deps, "scripts": u.scripts, "hasBin": u.has_bin, "ports": u.ports, "description": u.description,
                 "files": unit_files[i].0, "lines": unit_files[i].1,
                 "workspaceRoot": u.dir.is_empty() && units.len() > 1 && (root_is_workspace || unit_files[i].0 == 0),
             }),

@@ -17,9 +17,10 @@ export type ChipProps = {
 /** What a chip points at, for the hover card. */
 function preview(chip: Chip, { ctx, summaries }: ChipProps): { kind: string; where: string; title: string; sum?: string; rows?: [string, string, string][]; talks?: string[] } | null {
   if (chip.kind === "component") {
-    const n = ctx.arch.byId.get(chip.target!);
+    const n = ctx.cv.byId.get(chip.target!) ?? ctx.arch.byId.get(chip.target!);
     if (!n) return null;
-    const talks = ctx.arch.edges.filter((e) => e.source === n.id).map((e) => ctx.arch.byId.get(e.target)?.name).filter((x): x is string => !!x);
+    const m = ctx.cv.byId.has(n.id) ? ctx.cv : ctx.arch;
+    const talks = m.edges.filter((e) => e.source === n.id && !e.minor).map((e) => m.byId.get(e.target)?.name).filter((x): x is string => !!x);
     return { kind: n.kind.toUpperCase(), where: n.unit ? `${ctx.repoName(n.repoId)}${n.unit.dir ? `/${n.unit.dir}` : ""}` : n.detail, title: n.name, sum: summaries.get(n.id) ?? n.detail, talks: talks.slice(0, 6) };
   }
   if (chip.kind === "table") {
@@ -139,13 +140,13 @@ export function MiniMap({ ctx, highlight, onPick, vertical }: { ctx: DocsCtx; hi
   let nodes: { id: string; x: number; y: number }[];
   if (vertical) nodes = vertical.map((id, i) => ({ id, x: 0, y: i * (H + 22) }));
   else {
-    const cols = [0, 1, 2, 3].map((l) => ctx.arch.nodes.filter((n) => n.layer === l && n.kind !== "Missing" && (l !== 2 || ctx.arch.edges.some((e) => e.target === n.id && e.kind !== "imports"))).slice(0, 5)).filter((c) => c.length);
+    const cols = [0, 1, 2, 3].map((l) => ctx.cv.nodes.filter((n) => n.layer === l && n.kind !== "Missing" && (l !== 2 || ctx.cv.edges.some((e) => e.target === n.id && e.kind !== "imports"))).slice(0, 5)).filter((c) => c.length);
     nodes = cols.flatMap((c, ci) => c.map((n, i) => ({ id: n.id, x: ci * (W + 46), y: i * (H + 12) })));
   }
   const at = new Map(nodes.map((n) => [n.id, n]));
   const edges = vertical
     ? vertical.slice(1).map((to, i) => ({ id: `${vertical[i]}>${to}`, source: vertical[i], target: to }))
-    : ctx.arch.edges.filter((e) => e.kind !== "imports" && at.has(e.source) && at.has(e.target));
+    : ctx.cv.edges.filter((e) => e.kind !== "imports" && at.has(e.source) && at.has(e.target));
   const width = Math.max(...nodes.map((n) => n.x + W), W);
   const height = Math.max(...nodes.map((n) => n.y + H), H);
   return (
@@ -164,7 +165,7 @@ export function MiniMap({ ctx, highlight, onPick, vertical }: { ctx: DocsCtx; hi
           })}
         </svg>
         {nodes.map((p) => {
-          const n = ctx.arch.byId.get(p.id)!;
+          const n = ctx.cv.byId.get(p.id)!;
           const dim = highlight && !highlight.has(p.id);
           return (
             <div key={p.id} className="doc-mini-node mono" title={`${n.name} · ${n.kind}`} onClick={() => onPick(p.id)} style={{ left: p.x, top: p.y, width: W, height: H, opacity: dim ? 0.45 : 1, borderColor: highlight?.has(p.id) && vertical ? "var(--arch)" : undefined }}>

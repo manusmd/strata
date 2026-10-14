@@ -393,6 +393,12 @@ export async function installDevMock() {
         projects = projects.map((p) => (p.id === a.projectId && !p.repos.some((x) => x.id === r.id) ? { ...p, repos: [...p.repos, r] } : p));
         return r.id;
       }
+      case "identify_users": {
+        const parts = [...String(a.prompt).matchAll(/^- ([\w@/.-]+) \[/gm)].map((m) => m[1]);
+        const text = JSON.stringify({ users: [{ name: "Hosts", description: "Set up their availability and event types", uses: parts.filter((p) => p !== "docs").slice(0, 2) }, { name: "Attendees", description: "Book a time with a host", uses: parts.slice(0, 1) }, { name: "Integrators", description: "Build on the public platform API", uses: parts.filter((p) => /api/.test(p)) }].filter((u) => u.uses.length) });
+        summaries[`${a.projectId}|context:users`] = { projectId: a.projectId, nodeId: "context:users", hash: a.hash, text, model: a.model, createdAt: now };
+        return new Promise((r) => setTimeout(() => r(text), 1200));
+      }
       case "read_source":
         return `// ${a.path} (mock source)\nimport { db } from "../db";\n\nexport async function handle(req: Request) {\n  const user = await db.user.findUnique({ where: { id: req.userId } });\n  if (!user) throw new Error("not found");\n  return { ok: true, user };\n}\n`;
       case "open_in_editor":

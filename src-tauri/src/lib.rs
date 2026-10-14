@@ -255,6 +255,16 @@ async fn organize(app: AppHandle, project_id: String, lens: String, hash: String
     Ok(plan)
 }
 
+/// Names the users of the system for the context view (JSON), stored like a summary under `context:users`.
+#[tauri::command]
+async fn identify_users(app: AppHandle, project_id: String, hash: String, prompt: String, model: String) -> CmdResult<String> {
+    let m = model.clone();
+    let text = tauri::async_runtime::spawn_blocking(move || summary::users(&prompt, &m)).await.map_err(err)??;
+    let db = app.state::<Db>();
+    db::save_summary(&db.0.lock().unwrap(), &project_id, "context:users", &hash, &text, &model).map_err(err)?;
+    Ok(text)
+}
+
 #[tauri::command]
 fn doc_pages(db: State<Db>, project_id: String) -> CmdResult<Vec<db::DocPage>> {
     db::doc_pages(&db.0.lock().unwrap(), &project_id).map_err(err)
@@ -415,6 +425,7 @@ pub fn run() {
             delete_chat,
             current_user,
             set_project_brief,
+            identify_users,
             doc_pages,
             save_doc_page,
             write_doc_page,

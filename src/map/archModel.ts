@@ -13,7 +13,7 @@ export type ArchNode = {
   repoId: string | null;
   /** Column in the left-to-right layout: clients → services → libraries → data & external. */
   layer: 0 | 1 | 2 | 3;
-  unit?: { dir: string; packageName: string; files: number; lines: number; ports: number[]; deps: string[] };
+  unit?: { dir: string; packageName: string; files: number; lines: number; ports: number[]; deps: string[]; description?: string };
   infra?: { image: string | null; ports: number[]; file: string; dependsOn: string[] };
   datastore?: { engine: string; tables: string[] };
   external?: { via: string[] };
@@ -146,6 +146,12 @@ const IMAGE_KINDS: [RegExp, ArchKind, string][] = [
   [/nginx|traefik|caddy|haproxy/, "Proxy", "Reverse proxy"],
 ];
 
+/** Tools for developers (mail catchers, database UIs): part of the local setup, not of the system. */
+export const DEV_TOOL = /mailhog|mailpit|maildev|smtp4dev|adminer|pgadmin|phpmyadmin|redis-?commander|redisinsight|mongo-express|kafdrop|kafka-ui|portainer|dozzle|prisma.*studio|^studio$|drizzle-studio/i;
+
+/** What a compose service is, by its image: "PostgreSQL", "Redis", "Mail catcher"… */
+export const imageLabel = (image: string) => IMAGE_KINDS.find(([re]) => re.test(image))?.[2] ?? null;
+
 const ENGINE_LABEL: Record<string, string> = { postgres: "PostgreSQL", sqlite: "SQLite", mysql: "MySQL", mongodb: "MongoDB", sqlserver: "SQL Server", cockroachdb: "CockroachDB" };
 
 const LAYER: Record<ArchKind, ArchNode["layer"]> = {
@@ -219,7 +225,7 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
       detail: [c.label, (u.meta?.ports ?? []).length ? `:${u.meta.ports.join(", :")}` : null].filter(Boolean).join(" · "),
       repoId: u.repoId,
       layer: LAYER[c.kind],
-      unit: { dir: u.path ?? "", packageName: u.name, files: u.meta?.files ?? 0, lines: u.meta?.lines ?? 0, ports: u.meta?.ports ?? [], deps: u.meta?.deps ?? [] },
+      unit: { dir: u.path ?? "", packageName: u.name, files: u.meta?.files ?? 0, lines: u.meta?.lines ?? 0, ports: u.meta?.ports ?? [], deps: u.meta?.deps ?? [], description: u.meta?.description ?? undefined },
     });
   }
   for (const [f, u] of fileUnit) if (!shownUnits.has(u)) fileUnit.delete(f);
@@ -314,6 +320,8 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
       composeAlias.set(key, datastoreOf.get(i.repoId!)!);
       continue;
     }
+    // Dev tools belong to the local setup (Deployment view), not to the system.
+    if (DEV_TOOL.test(image) || DEV_TOOL.test(i.name)) continue;
     // The project's own image (`…/calcom/cal.diy`) is the app itself, deployed.
     const slug = repoSlug.get(i.repoId!) ?? "";
     if (slug.length >= 4 && image.toLowerCase().replace(/[^a-z0-9/]/g, "").includes(slug)) continue;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MapLegend } from "./MapLegend";
 import {
   Background,
   BackgroundVariant,
@@ -352,12 +353,20 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, o
         <ZoomTo request={zoomRequest} />
       </ReactFlow>
       {!layout && <div className="map-loading">{layoutError ? `Couldn’t lay out the map: ${layoutError}` : "Laying out the map…"}</div>}
-      <div className="map-legend">
-        <span><i className="lg-line" /> imports</span>
-        <span><i className="lg-line out" /> selected → uses</span>
-        <span><i className="lg-line in" /> used by → selected</span>
-        <span><i className="lg-line ghost" /> missing</span>
-      </div>
+      <MapLegend
+        summary={`${model.files.size} files`}
+        groups={[
+          {
+            title: "Lines",
+            items: [
+              { icon: <i className="lg-line" />, label: "imports" },
+              { icon: <i className="lg-line out" />, label: "selected → uses" },
+              { icon: <i className="lg-line in" />, label: "used by → selected" },
+              { icon: <i className="lg-line ghost" />, label: "missing package" },
+            ],
+          },
+        ]}
+      />
       {sel && <Inspector model={model} project={project} graph={graph} sel={sel} onSelect={setSel} onOpenTable={onOpenTable} onOpenFile={onOpenFile} onClose={() => setSel(null)} />}
     </div>
   );

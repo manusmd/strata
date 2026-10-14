@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MapLegend } from "./MapLegend";
 import { Background, BackgroundVariant, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import type { Graph, Project } from "../api";
@@ -239,13 +240,25 @@ function DbMapInner({ project, graph, focus: focusReq, onOpenFile, plan = null }
         <ZoomWatcher container={container} onLevel={() => {}} />
       </ReactFlow>
       {!layout && <div className="map-loading">Laying out the schema…</div>}
-      <div className="map-legend">
-        <span>{model.tables.size} tables · {model.relations.length} relations</span>
-        <span><i className="db-lg pk">PK</i> primary key</span>
-        <span><i className="db-lg fk">FK</i> foreign key</span>
-        <span><i className="lg-line" style={{ borderColor: "var(--db)" }} /> many → one</span>
-        {model.hubs.size > 0 && <span className="faint">Lines to {[...model.hubs.keys()].map((id) => model.tables.get(id)?.name).join(", ")} show on selection</span>}
-      </div>
+      <MapLegend
+        summary={`${model.tables.size} tables · ${model.relations.length} relations`}
+        groups={[
+          {
+            title: "Keys",
+            items: [
+              { icon: <i className="db-lg pk">PK</i>, label: "primary key" },
+              { icon: <i className="db-lg fk">FK</i>, label: "foreign key" },
+            ],
+          },
+          {
+            title: "Lines",
+            items: [
+              { icon: <i className="lg-line" style={{ borderColor: "var(--db)" }} />, label: "many → one" },
+              ...(model.hubs.size > 0 ? [{ icon: <i className="lg-line ghost" />, label: `lines to ${[...model.hubs.keys()].map((id) => model.tables.get(id)?.name).join(", ")} show on selection` }] : []),
+            ],
+          },
+        ]}
+      />
       {sel && <DbInspector model={model} project={project} id={sel} onSelect={select} onOpenFile={onOpenFile} onClose={() => setSel(null)} />}
     </div>
   );

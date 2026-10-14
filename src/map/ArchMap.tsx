@@ -1,4 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { MapLegend } from "./MapLegend";
+import { ContextView } from "../arch/ContextView";
+import { flowPath } from "../docs/outline";
+import { docsStore, useDocs } from "../docs/store";
+import { DeploymentView } from "../arch/DeploymentView";
+import { actorsPrompt, guessActors, parseActors } from "../arch/actors";
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import { Background, BackgroundVariant, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
@@ -10,6 +16,7 @@ import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
 import type { Plan } from "../sections/plan";
 import { ARCH_ROLE, ROLES } from "../arch/roles";
+import { summaryStore, useSummaries } from "../summary/store";
 import { CodeMap } from "./CodeMap";
 import { focusOn, type Focus } from "./focus";
 import { fontsReady, lineCount, MONO, SANS, textWidth } from "./measure";
@@ -17,18 +24,31 @@ import { fontsReady, lineCount, MONO, SANS, textWidth } from "./measure";
 const NODE_W = 248;
 const elk = new ELK();
 
-type Size = { nameLines: number; detailLines: number; height: number };
+type Size = { nameLines: number; detailLines: number; respLines: number; height: number };
 
-/** Measured so long names and details wrap inside the card instead of being cut. */
-function cardSize(n: ArchNode): Size {
+/** What a component is for, in a line: the start of its AI summary, else its package.json description. */
+function respOf(n: ArchNode, summaries: Map<string, string>): string | null {
+  const s = summaries.get(n.id);
+  const first = s ? s.match(/^.+?[.!?](\s|$)/)?.[0].trim() ?? s : n.unit?.description;
+  if (!first) return null;
+  return first.length > 140 ? `${first.slice(0, 137).trimEnd()}…` : first;
+}
+
+/** Datastores are drawn as cylinders, external systems as dashed boxes: the usual notation. */
+const SHAPE: Partial<Record<ArchNode["kind"], string>> = { Database: "db", Cache: "db", Queue: "db", Storage: "db", Search: "db", External: "ext", AI: "ext", Mail: "ext" };
+
+/** Measured so long names, details and descriptions wrap inside the card instead of being cut. */
+function cardSize(n: ArchNode, resp: string | null): Size {
   const inner = NODE_W - 28 - 3;
   const kind = textWidth(n.kind, `11px ${SANS}`) + 14;
   const nameLines = lineCount(n.name, `600 13.5px ${MONO}`, inner - 26 - 18 - kind, 3);
   const detailLines = lineCount(n.detail, `12px ${SANS}`, inner, 3);
-  return { nameLines, detailLines, height: 27 + Math.max(26, nameLines * 18) + 6 + detailLines * 16 + 6 + 20 };
+  const respLines = resp ? lineCount(resp, `12px ${SANS}`, inner, 2) : 0;
+  const lid = SHAPE[n.kind] === "db" ? 8 : 0;
+  return { nameLines, detailLines, respLines, height: 27 + Math.max(26, nameLines * 18) + 6 + detailLines * 16 + (respLines ? 6 + respLines * 16 : 0) + 6 + 20 + lid };
 }
 
-type CardData = { node: ArchNode; highlight: Highlight; repoName: string | null; color: string; size: Size };
+type CardData = { node: ArchNode; highlight: Highlight; repoName: string | null; color: string; size: Size; resp: string | null };
 
 const initials = (name: string) => {
   const parts = name.replace(/[^A-Za-z0-9]+/g, " ").trim().split(" ");
@@ -40,7 +60,7 @@ const ArchCard = memo(({ data }: NodeProps<Node<CardData>>) => {
   const color = KIND_COLOR[node.kind];
   const missing = node.kind === "Missing";
   return (
-    <div className={`arch-card ${missing ? "missing" : ""} hl-${data.highlight ?? "none"}`} style={{ ["--kind" as any]: color }}>
+    <div className={`arch-card ${missing ? "missing" : ""} ${SHAPE[node.kind] ? `shape-${SHAPE[node.kind]}` : ""} hl-${data.highlight ?? "none"}`} style={{ ["--kind" as any]: color }}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="map-handle" />
       <Handle type="source" position={Position.Right} isConnectable={false} className="map-handle" />
       <div className="arch-top">
@@ -49,6 +69,11 @@ const ArchCard = memo(({ data }: NodeProps<Node<CardData>>) => {
         <span className="arch-kind">{node.kind}</span>
       </div>
       <div className="arch-detail wrap" style={{ WebkitLineClamp: data.size.detailLines }}>{node.detail}</div>
+      {data.resp && (
+        <div className="arch-resp wrap" style={{ WebkitLineClamp: data.size.respLines }} title={data.resp}>
+          {data.resp}
+        </div>
+      )}
       <div className="arch-bottom">
         {data.repoName && (
           <span className="chip arch-chip">
@@ -167,9 +192,13 @@ type Props = {
   plan?: Plan | null;
   /** Opens the component a file belongs to, zoomed into its code, with the file selected. */
   drillFile?: Focus | null;
+  /** "Enrich with AI" is on: Claude also names the users in the context view. */
+  aiEnriched?: boolean;
+  /** Opens a Docs page (a flow's page, from the flow bar). */
+  onOpenDocs?: (pageId: string) => void;
 };
 
-function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan: aiPlan = null, drillFile = null }: Props) {
+function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan: aiPlan = null, drillFile = null, aiEnriched = false, onOpenDocs }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
@@ -210,6 +239,71 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     return { sections, sectionOf };
   }, [aiPlan, model]);
 
+  const summaryEntries = useSummaries(project.id);
+
+  // Flows: the main request path from each app, the same ones Docs describes, played on the map.
+  const flows = useMemo(
+    () =>
+      model.nodes
+        .filter((n) => ARCH_ROLE[n.kind] === 0 && n.unit)
+        .map((n) => ({ id: `flow:${n.id}`, title: `${n.name} request path`, steps: flowPath(model, n.id) }))
+        .filter((f) => f.steps.length >= 3),
+    [model],
+  );
+  const [played, setPlayed] = useState<{ id: string; step: number; playing: boolean } | null>(null);
+  const [flowMenu, setFlowMenu] = useState(false);
+  const activeFlow = played ? flows.find((f) => f.id === played.id) : undefined;
+  const docs = useDocs(project.id);
+  useEffect(() => {
+    if (played) docsStore.load(project.id);
+  }, [played, project.id]);
+  useEffect(() => {
+    if (!played?.playing || !activeFlow) return;
+    const t = setTimeout(() => setPlayed((f) => (f && f.step < activeFlow.steps.length - 1 ? { ...f, step: f.step + 1 } : f && { ...f, playing: false })), 2600);
+    return () => clearTimeout(t);
+  }, [played, activeFlow]);
+
+  // Context (the system as one box, its users and external systems) or the containers inside it.
+  const viewKey = `strata-arch-view-${project.id}`;
+  type View = "context" | "containers" | "deployment";
+  const [view, setViewState] = useState<View>(() => {
+    try {
+      const v = localStorage.getItem(viewKey);
+      return v === "context" || v === "deployment" ? v : "containers";
+    } catch {
+      return "containers";
+    }
+  });
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(viewKey, v);
+    } catch {}
+  };
+  // Users: guessed from the entry points; with "Enrich with AI", named by Claude.
+  const usersAsk = useMemo(() => actorsPrompt(project.name, model, summaryStore.texts(project.id)), [project.name, project.id, model]); // eslint-disable-line react-hooks/exhaustive-deps
+  const usersEntry = summaryEntries["context:users"];
+  useEffect(() => {
+    if (!aiEnriched || view !== "context" || usersEntry?.pending || usersEntry?.error) return;
+    if (usersEntry?.summary?.hash !== usersAsk.hash) summaryStore.requestUsers(project, usersAsk.hash, usersAsk.prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiEnriched, view, usersAsk.hash, usersEntry?.summary?.hash]);
+  const actors = useMemo(() => {
+    if (aiEnriched && usersEntry?.summary?.hash === usersAsk.hash) {
+      try {
+        const named = parseActors(usersEntry.summary.text, usersAsk.ids);
+        if (named.length) return named;
+      } catch {}
+    }
+    return guessActors(model);
+  }, [aiEnriched, usersEntry?.summary, usersAsk, model]);
+  const resp = useMemo(() => {
+    const texts = summaryStore.texts(project.id);
+    return new Map(model.nodes.map((n) => [n.id, respOf(n, texts)]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, summaryEntries, project.id]);
+  // Re-measure only when a description actually changes, not on every summary update.
+  const respKey = useMemo(() => [...resp.values()].join("|"), [resp]);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [sizes, setSizes] = useState<Map<string, Size>>(new Map());
   const [sel, setSel] = useState<string | null>(focus);
@@ -219,7 +313,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     let cancelled = false;
     fontsReady()
       .then(() => {
-        const sz = new Map(model.nodes.map((n) => [n.id, cardSize(n)]));
+        const sz = new Map(model.nodes.map((n) => [n.id, cardSize(n, resp.get(n.id) ?? null)]));
         return (plan ? layoutSections(model, plan, sz) : layoutArch(model, sz)).then((l) => ({ l, sz }));
       })
       .then(({ l, sz }) => {
@@ -233,7 +327,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, plan]);
+  }, [model, plan, respKey]);
 
   useEffect(() => {
     if (layout && !fitted.current) {
@@ -259,7 +353,13 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     if (!layout) return { nodes: [] as Node[], edges: [] as Edge[] };
     const related = new Set<string>();
     if (sel) for (const e of model.edges) if (e.source === sel || e.target === sel) related.add(e.source === sel ? e.target : e.source);
-    const hl = (id: string): Highlight => (!sel ? null : id === sel ? "selected" : related.has(id) ? "related" : "dim");
+    const onPath = activeFlow ? new Set(activeFlow.steps.slice(0, played!.step + 1)) : null;
+    const current = activeFlow ? activeFlow.steps[played!.step] : null;
+    const hl = (id: string): Highlight =>
+      onPath ? (id === current ? "selected" : onPath.has(id) ? "related" : "dim") : !sel ? null : id === sel ? "selected" : related.has(id) ? "related" : "dim";
+    // Lines along the played part of the flow, numbered.
+    const flowEdge = new Map<string, number>();
+    if (activeFlow) for (let k = 0; k < played!.step; k++) flowEdge.set(`${activeFlow.steps[k]}>${activeFlow.steps[k + 1]}`, k + 1);
     const repoName = (id: string | null) => (id ? project.repos.find((r) => r.id === id)?.name ?? null : null);
     const frames: Node[] = (plan?.sections ?? []).flatMap((sec, i) => {
       const b = layout.boxes.get(`sec:${i}`);
@@ -291,20 +391,22 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         const size = sizes.get(n.id);
         const section = plan?.sectionOf.get(n.id);
         return b && size
-          ? [{ id: n.id, type: "arch", parentId: section !== undefined ? `sec:${section}` : undefined, position: { x: b.x, y: b.y }, width: NODE_W, height: b.height, data: { node: n, highlight: hl(n.id), repoName: project.repos.length > 1 || n.unit ? repoName(n.repoId) : null, color: project.color, size }, draggable: false, zIndex: 2 }]
+          ? [{ id: n.id, type: "arch", parentId: section !== undefined ? `sec:${section}` : undefined, position: { x: b.x, y: b.y }, width: NODE_W, height: b.height, data: { node: n, highlight: hl(n.id), repoName: project.repos.length > 1 || n.unit ? repoName(n.repoId) : null, color: project.color, size, resp: resp.get(n.id) ?? null }, draggable: false, zIndex: 2 }]
           : [];
       }),
     ];
     // Library-to-library imports only show for the selected library.
     const edges: Edge[] = model.edges.filter((e) => !e.minor || e.source === sel || e.target === sel).map((e) => {
-      const active = !!sel && (e.source === sel || e.target === sel);
+      const step = flowEdge.get(`${e.source}>${e.target}`);
+      const active = activeFlow ? step !== undefined : !!sel && (e.source === sel || e.target === sel);
+      const dimmed = activeFlow ? step === undefined : !!sel && !active;
       return {
         id: e.id,
         source: e.source,
         target: e.target,
-        className: `arch-edge k-${e.kind} ${e.inferred ? "inferred" : ""} ${e.target.startsWith("missing:") ? "missing" : ""} ${active ? "active" : sel ? "dim" : ""}`,
-        // A short label on every line (how they talk); the full evidence when it's selected.
-        label: active ? [...e.reasons, ...(e.via?.length ? [`via ${e.via.join(", ")}`] : [])].join(" · ") : edgeLabel(e, model),
+        className: `arch-edge k-${e.kind} ${e.inferred ? "inferred" : ""} ${e.target.startsWith("missing:") ? "missing" : ""} ${active ? "active" : dimmed ? "dim" : ""} ${step ? "flow" : ""}`,
+        // A short label on every line (how they talk); the full evidence when it's selected; the step number in a flow.
+        label: step ? `${step} · ${edgeLabel(e, model)}` : active ? [...e.reasons, ...(e.via?.length ? [`via ${e.via.join(", ")}`] : [])].join(" · ") : edgeLabel(e, model),
         labelBgPadding: [6, 3] as [number, number],
         labelBgBorderRadius: 6,
         labelClassName: `arch-edge-label ${active ? "" : "quiet"}`,
@@ -313,7 +415,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       };
     });
     return { nodes, edges };
-  }, [layout, sizes, model, sel, project, plan]);
+  }, [layout, sizes, model, sel, project, plan, resp, activeFlow, played]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -335,6 +437,50 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       project: { ...project, repos: project.repos.filter((r) => r.id === drilled.repoId) },
     };
   }, [drilled, full, graph, project]);
+  const viewToggle = (
+    <div className="arch-view-toggle glass">
+      <button className={view === "context" ? "on" : ""} onClick={() => setView("context")} title="The system as one box, with its users and the external systems it depends on">
+        Context
+      </button>
+      <button className={view === "containers" ? "on" : ""} onClick={() => setView("containers")} title="What runs and stores data inside the system">
+        Containers
+      </button>
+      <button className={view === "deployment" ? "on" : ""} onClick={() => setView("deployment")} title="How it runs: docker-compose services, scripts, ports and dev tools">
+        Deployment
+      </button>
+    </div>
+  );
+  if (view === "deployment" && !drilled)
+    return (
+      <div className="map">
+        <DeploymentView project={project} graph={graph} model={model} onSelect={setSel} />
+        {viewToggle}
+        {sel && full.byId.has(sel) && <ArchInspector onDrill={setDrill} model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />}
+      </div>
+    );
+  if (view === "context" && !drilled)
+    return (
+      <div className="map">
+        <ContextView projectName={project.name} model={model} actors={actors} onOpenContainers={() => setView("containers")} onSelect={setSel} />
+        {viewToggle}
+        {aiEnriched && usersEntry?.pending && <div className="glass scan-pill" style={{ top: "auto", bottom: 14, left: "50%" }}><span className="ai-spark">✦</span> Naming the users…</div>}
+        <MapLegend
+          summary={`${actors.length} kinds of users · ${model.nodes.filter((n) => ARCH_ROLE[n.kind] === 5).length} external systems`}
+          groups={[
+            {
+              title: "Shapes",
+              items: [
+                { icon: <i className="lg-person" />, label: aiEnriched && actors.some((a) => a.ai) ? "users, named by Claude" : "users, guessed from the apps" },
+                { icon: <i className="lg-boundary" />, label: `${project.name}: double-click to see inside` },
+                { icon: <i className="lg-shape ext" />, label: "external system" },
+              ],
+            },
+          ]}
+        />
+        {sel && full.byId.has(sel) && <ArchInspector onDrill={setDrill} model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />}
+      </div>
+    );
+
   if (drilled && scoped)
     return (
       <div className="map" style={{ display: "flex", flexDirection: "column" }}>
@@ -376,18 +522,93 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <ZoomWatcher container={container} onLevel={() => {}} />
       </ReactFlow>
       {!layout && <div className="map-loading">Laying out the architecture…</div>}
-      <div className="map-legend">
-        <span>
-          {Object.entries(counts)
-            .map(([k, n]) => `${n} ${k === "Library" ? (n === 1 ? "library" : "libraries") : k.toLowerCase() + (n === 1 || ["Missing", "External", "Infra"].includes(k) ? "" : "s")}`)
-            .join(" · ")}
-        </span>
-        <span><i className="lg-line" style={{ borderColor: "var(--arch)" }} /> calls</span>
-        <span><i className="lg-line" style={{ borderColor: "var(--db)" }} /> data</span>
-        <span><i className="lg-line" /> imports / uses</span>
-        <span><i className="lg-line ghost" /> missing · inferred</span>
-        <span><i className="lg-boundary" /> {project.name}</span>
-      </div>
+      {viewToggle}
+      {flows.length > 0 && (
+        <div className="arch-flows">
+          <button className={`btn small ${activeFlow ? "plan-primary" : ""}`} onClick={() => setFlowMenu((o) => !o)}>
+            ▶ Flows
+          </button>
+          {flowMenu && (
+            <div className="arch-flow-menu glass">
+              {flows.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => {
+                    setPlayed({ id: f.id, step: 0, playing: true });
+                    setFlowMenu(false);
+                    setSel(null);
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>{f.title}</span>
+                  <span className="faint mono" style={{ fontSize: 11.5 }}>{f.steps.map((s) => model.byId.get(s)?.name).join(" → ")}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {activeFlow && played && (() => {
+        const node = model.byId.get(activeFlow.steps[played.step]);
+        const page = docs.pages[activeFlow.id];
+        const text = page?.blocks.find((b) => b.key === `step:${played.step}`)?.text;
+        const plainText = text?.replace(/\[\[(?:component|file|table|symbol):([^\]]+)\]\]/g, (_, v) => String(v).replace(/^.*\//, ""));
+        return (
+          <div className="arch-flow-bar glass">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="arch-flow-num mono">{played.step + 1}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  {activeFlow.title} <span className="faint" style={{ fontWeight: 400 }}>· step {played.step + 1} of {activeFlow.steps.length}</span>
+                </div>
+                <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                  <span className="mono" style={{ color: "var(--text)" }}>{node?.name}</span> {plainText ? `— ${plainText}` : `· ${node?.detail ?? ""}`}
+                </div>
+              </div>
+              <button className="icon-btn" title="Previous step" disabled={played.step === 0} onClick={() => setPlayed({ ...played, step: played.step - 1, playing: false })}>‹</button>
+              <button className="icon-btn" title="Next step" disabled={played.step >= activeFlow.steps.length - 1} onClick={() => setPlayed({ ...played, step: played.step + 1, playing: false })}>›</button>
+              <button className="btn small" onClick={() => setPlayed({ ...played, step: played.playing || played.step >= activeFlow.steps.length - 1 ? 0 : played.step, playing: !played.playing })}>
+                {played.playing ? "■ Stop" : "▶ Play"}
+              </button>
+              {onOpenDocs && (
+                <button className="btn small ghost" onClick={() => onOpenDocs(activeFlow.id)} title="Open this flow's Docs page">
+                  Docs
+                </button>
+              )}
+              <button className="icon-btn" title="Close the flow" onClick={() => setPlayed(null)}>×</button>
+            </div>
+            {!text && <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>Write this flow in Docs to see what happens at each step.</div>}
+          </div>
+        );
+      })()}
+      <MapLegend
+        summary={`${model.nodes.length} parts · ${model.edges.filter((e) => !e.minor).length} connections`}
+        groups={[
+          {
+            title: "Parts",
+            items: Object.entries(counts).map(([k, n]) => ({
+              icon: <i className="lg-dot" style={{ background: KIND_COLOR[k as ArchNode["kind"]] }} />,
+              label: `${n} ${k === "Library" ? (n === 1 ? "library" : "libraries") : k.toLowerCase() + (n === 1 || ["Missing", "External", "Infra"].includes(k) ? "" : "s")}`,
+            })),
+          },
+          {
+            title: "Lines",
+            items: [
+              { icon: <i className="lg-line" style={{ borderColor: "var(--arch)" }} />, label: "calls (HTTP, tRPC)" },
+              { icon: <i className="lg-line" style={{ borderColor: "var(--db)" }} />, label: "reads or writes data" },
+              { icon: <i className="lg-line" />, label: "uses (SDK, cache, mail)" },
+              { icon: <i className="lg-line ghost" />, label: "missing or inferred" },
+            ],
+          },
+          {
+            title: "Shapes",
+            items: [
+              { icon: <i className="lg-shape db" />, label: "datastore" },
+              { icon: <i className="lg-shape ext" />, label: "external system" },
+              { icon: <i className="lg-boundary" />, label: `${project.name} system boundary` },
+            ],
+          },
+        ]}
+      />
       {sel && full.byId.has(sel) && (
         <ArchInspector onDrill={setDrill} model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />
       )}

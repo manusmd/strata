@@ -106,19 +106,20 @@ export function pageInput(ctx: DocsCtx, page: PageDef, summaries: Map<string, st
   }
 
   if (page.kind === "flow") {
+    const cvName = (id: string) => ctx.cv.byId.get(id)?.name ?? id;
     const steps = page.steps!;
     const hops = steps.slice(1).map((to, i) => ({ from: steps[i], to, edge: edgeBetween(ctx, steps[i], to) }));
     const fileIds = [...new Set(hops.flatMap((h) => h.edge?.files.slice(0, 2) ?? []))];
     const files = fileIds.map((f) => labelOf(ctx, f)).flatMap((l) => (abs(ctx, l) ? [{ path: abs(ctx, l)!, label: l }] : [])).slice(0, 5);
-    const slots = [{ key: "intro" }, ...steps.map((s, i) => ({ key: `step:${i}`, heading: name(s) }))];
+    const slots = [{ key: "intro" }, ...steps.map((s, i) => ({ key: `step:${i}`, heading: cvName(s) }))];
     return {
       hash: hashOf(...steps, ...hops.map((h) => h.edge?.reasons.join() ?? ""), ...fileIds.map((f) => fileHash(ctx, f))),
       prompt: [
-        `Page "${page.title}": the main path a request takes through the project "${project.name}", starting at ${name(steps[0])}.`,
+        `Page "${page.title}": the main path a request takes through the project "${project.name}", starting at ${cvName(steps[0])}.`,
         "Steps:",
-        ...steps.map((s, i) => `${i + 1}. ${name(s)} [${arch.byId.get(s)?.kind}] ${arch.byId.get(s)?.detail ?? ""}${summaries.get(s) ? ` — ${summaries.get(s)}` : ""}`),
+        ...steps.map((s, i) => `${i + 1}. ${cvName(s)} [${ctx.cv.byId.get(s)?.kind}] ${ctx.cv.byId.get(s)?.detail ?? ""}${summaries.get(s) ? ` — ${summaries.get(s)}` : ""}`),
         "Connections:",
-        ...hops.map((h) => `- ${name(h.from)} → ${name(h.to)}: ${h.edge?.reasons.slice(0, 3).join("; ") ?? "connected"}`),
+        ...hops.map((h) => `- ${cvName(h.from)} → ${cvName(h.to)}: ${h.edge?.reasons.slice(0, 3).join("; ") ?? "connected"}`),
         "",
         `Reply with JSON: {"intro": "…", "steps": ["…", …]} — a 1–2 sentence intro, then exactly ${steps.length} strings, one per step, each 1–3 sentences on what happens at that step.`,
       ].join("\n"),

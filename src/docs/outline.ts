@@ -2,12 +2,15 @@ import type { Graph, GraphNode, Project } from "../api";
 import type { ArchEdge, ArchModel, ArchNode } from "../map/archModel";
 import type { DbModel, DbTable } from "../map/dbModel";
 import { ARCH_ROLE, ROLES } from "../arch/roles";
+import { containerView } from "../map/archModel";
 
 /** Everything a docs page is built from: the scan, as the maps see it. */
 export type DocsCtx = {
   project: Project;
   graph: Graph;
   arch: ArchModel;
+  /** The Architecture page's container view: what the System pages, flows and component facts follow. */
+  cv: ArchModel;
   db: DbModel;
   /** Graph nodes by id, and files by "repo/path" label. */
   nodes: Map<string, GraphNode>;
@@ -32,7 +35,7 @@ export type PageDef = {
   steps?: string[];
 };
 
-export const GROUPS = ["Start here", "System", "Components", "Data model", "Flows", "Glossary"] as const;
+export const GROUPS = ["Start here", "System", "Components", "Libraries", "Data model", "Flows", "Glossary"] as const;
 export type Group = (typeof GROUPS)[number];
 
 export const slug = (s: string) => s.toLowerCase().replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "page";
@@ -41,10 +44,12 @@ export function makeCtx(project: Project, graph: Graph, arch: ArchModel, db: DbM
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   const repoName = (id: string | null) => project.repos.find((r) => r.id === id)?.name ?? "";
   const fileByLabel = new Map(graph.nodes.filter((n) => n.kind === "file" && n.path).map((n) => [`${repoName(n.repoId)}/${n.path}`, n]));
-  return { project, graph, arch, db, nodes, fileByLabel, repoName };
+  return { project, graph, arch, cv: containerView(arch), db, nodes, fileByLabel, repoName };
 }
 
 const shown = (n: ArchNode) => n.kind !== "Missing";
+
+const outside = (arch: ArchModel, id: string) => (ARCH_ROLE[arch.byId.get(id)?.kind ?? "External"] === 5 ? 1 : 0);
 
 /** The strongest next hop of a request: calls before data before uses, never back or into libraries. */
 function nextHop(arch: ArchModel, from: string, seen: Set<string>): ArchEdge | undefined {
@@ -55,7 +60,8 @@ function nextHop(arch: ArchModel, from: string, seen: Set<string>): ArchEdge | u
       const t = arch.byId.get(e.target);
       return t && t.kind !== "Library" && t.kind !== "Missing";
     })
-    .sort((a, b) => rank[a.kind] - rank[b.kind] || b.weight - a.weight)[0];
+    // Inside the system first (the request goes on from there), external services last.
+    .sort((a, b) => outside(arch, a.target) - outside(arch, b.target) || rank[a.kind] - rank[b.kind] || b.weight - a.weight)[0];
 }
 
 /** From each app, follow the main request path through the system. */
@@ -70,24 +76,25 @@ export function flowPath(arch: ArchModel, start: string): string[] {
 }
 
 export function buildOutline(ctx: DocsCtx): PageDef[] {
-  const { arch, db } = ctx;
+  const { arch, cv, db } = ctx;
   const pages: PageDef[] = [{ id: "start", kind: "start", group: "Start here", title: "Overview", mono: false }];
 
   // System pages follow the architectural roles, in the map's reading order.
   ROLES.forEach((title, role) => {
-    const members = arch.nodes.filter((n) => shown(n) && ARCH_ROLE[n.kind] === role).map((n) => n.id);
+    const members = cv.nodes.filter((n) => shown(n) && ARCH_ROLE[n.kind] === role).map((n) => n.id);
     if (members.length) pages.push({ id: `role:${role}`, kind: "section", group: "System", title, mono: false, members });
   });
 
-  for (const n of arch.nodes.filter((n) => n.unit).sort((a, b) => a.layer - b.layer || a.name.localeCompare(b.name)))
-    pages.push({ id: `component:${n.id}`, kind: "component", group: "Components", title: n.name, mono: true, node: n.id });
+  // Containers are the components; shared libraries get their own group, like "Look inside" on the map.
+  for (const n of arch.nodes.filter((n) => n.unit).sort((a, b) => ARCH_ROLE[a.kind] - ARCH_ROLE[b.kind] || a.name.localeCompare(b.name)))
+    pages.push({ id: `component:${n.id}`, kind: "component", group: cv.byId.has(n.id) ? "Components" : "Libraries", title: n.name, mono: true, node: n.id });
 
   const groups = db.repos.flatMap((r) => r.groups).filter((g) => g.tables.length);
   if (db.tables.size && (db.tables.size <= 12 || groups.length < 2)) pages.push({ id: "data", kind: "data", group: "Data model", title: "All tables", mono: false, tables: [...db.tables.keys()] });
   else for (const g of groups) pages.push({ id: `data:${g.id}`, kind: "data", group: "Data model", title: g.label, mono: false, tables: g.tables.map((t) => t.id) });
 
-  for (const app of arch.nodes.filter((n) => n.layer === 0 && n.unit)) {
-    const steps = flowPath(arch, app.id);
+  for (const app of cv.nodes.filter((n) => ARCH_ROLE[n.kind] === 0 && n.unit)) {
+    const steps = flowPath(cv, app.id);
     if (steps.length >= 3) pages.push({ id: `flow:${app.id}`, kind: "flow", group: "Flows", title: `${app.name} request path`, mono: false, steps });
   }
 
@@ -134,9 +141,11 @@ export function envVars(ctx: DocsCtx, files: Set<string>): string[] {
 export function componentFacts(ctx: DocsCtx, id: string): FactRow[] {
   const n = ctx.arch.byId.get(id);
   if (!n) return [];
-  const name = (x: string) => ctx.arch.byId.get(x);
-  const out = ctx.arch.edges.filter((e) => e.source === id && name(e.target));
-  const inc = ctx.arch.edges.filter((e) => e.target === id && name(e.source));
+  // Containers: what they do, including through their libraries. Libraries: their own imports.
+  const m = ctx.cv.byId.has(id) ? ctx.cv : ctx.arch;
+  const name = (x: string) => m.byId.get(x);
+  const out = m.edges.filter((e) => e.source === id && name(e.target));
+  const inc = m.edges.filter((e) => e.target === id && name(e.source));
   const files = new Set(unitFiles(ctx, id).map((f) => f.id));
   const { reads, writes } = tableUse(ctx, files);
   const entries = unitFiles(ctx, id).filter((f) => ENTRY.test(f.name)).sort((a, b) => (a.path ?? "").split("/").length - (b.path ?? "").split("/").length).slice(0, 3);
@@ -159,12 +168,12 @@ export function componentFacts(ctx: DocsCtx, id: string): FactRow[] {
 
 export function sectionFacts(ctx: DocsCtx, members: string[]): FactRow[] {
   const inside = new Set(members);
-  const comps = members.map((m) => ctx.arch.byId.get(m)!).filter(Boolean);
+  const comps = members.map((m) => ctx.cv.byId.get(m)!).filter(Boolean);
   const leaving = new Map<string, ArchNode>();
   const arriving = new Map<string, ArchNode>();
-  for (const e of ctx.arch.edges) {
-    if (inside.has(e.source) && !inside.has(e.target) && ctx.arch.byId.get(e.target)) leaving.set(e.target, ctx.arch.byId.get(e.target)!);
-    if (inside.has(e.target) && !inside.has(e.source) && ctx.arch.byId.get(e.source)) arriving.set(e.source, ctx.arch.byId.get(e.source)!);
+  for (const e of ctx.cv.edges) {
+    if (inside.has(e.source) && !inside.has(e.target) && ctx.cv.byId.get(e.target)) leaving.set(e.target, ctx.cv.byId.get(e.target)!);
+    if (inside.has(e.target) && !inside.has(e.source) && ctx.cv.byId.get(e.source)) arriving.set(e.source, ctx.cv.byId.get(e.source)!);
   }
   return [
     { label: "Parts", items: comps.map((c) => compChip(c, c.kind)) },
@@ -213,5 +222,5 @@ export function runChecklist(ctx: DocsCtx): CheckItem[] {
 
 /** The two components a flow step connects, with what Strata knows about the connection. */
 export function edgeBetween(ctx: DocsCtx, a: string, b: string): ArchEdge | undefined {
-  return ctx.arch.edges.find((e) => e.source === a && e.target === b);
+  return ctx.cv.edges.find((e) => e.source === a && e.target === b);
 }

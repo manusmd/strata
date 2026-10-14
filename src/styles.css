@@ -463,14 +463,22 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 }
 .map-minimap .react-flow__minimap-mask { fill: var(--minimap-mask); }
 .map-legend {
-  position: absolute; left: 14px; bottom: 14px;
-  display: flex; gap: 14px; align-items: center;
-  padding: 7px 12px; border-radius: 10px;
-  font-size: 12px; color: var(--text-2);
-  background: var(--glass); border: 1px solid var(--glass-border);
-  backdrop-filter: blur(24px);
+  position: absolute; left: 14px; bottom: 14px; z-index: 5;
+  border-radius: 10px; font-size: 12px; color: var(--text-2);
+  background: var(--glass-strong); border: 1px solid var(--glass-border);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  max-width: min(320px, calc(100% - 28px));
 }
-.map-legend span { display: flex; align-items: center; gap: 6px; }
+.map-legend.open { box-shadow: var(--shadow); }
+.map-legend-head { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 10px 0 8px; border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.map-legend-i { width: 16px; height: 16px; border-radius: 50%; border: 1.2px solid var(--text-3); display: grid; place-items: center; font: 600 10px var(--mono); color: var(--text-3); flex: none; }
+.map-legend-sum { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-legend-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 12px; border-top: 1px solid var(--line); padding-top: 10px; max-height: 50vh; overflow-y: auto; }
+.map-legend-group { display: flex; flex-direction: column; gap: 5px; }
+.map-legend-title { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.map-legend-row { display: flex; align-items: center; gap: 8px; line-height: 1.35; }
+.map-legend-icon { width: 18px; display: flex; justify-content: center; flex: none; }
+.lg-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .lg-line { width: 16px; height: 0; border-top: 1.5px solid var(--edge-strong); display: inline-block; }
 .lg-line.out { border-color: var(--code); }
 .lg-line.in { border-color: var(--db); }
@@ -1310,3 +1318,68 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .insp-row.on { background: var(--hover); }
 .sections-on { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; font-size: 12.5px; font-weight: 500; color: var(--text); }
 .sections-toggle > button:not(.sections-retry):not(.on) { color: var(--text-2); }
+
+/* Architecture cards: what a component is for, and conventional shapes */
+.arch-resp { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.arch-resp.wrap { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+/* Datastores: a cylinder (elliptical ends and a lid line) */
+.arch-card.shape-db { border-radius: 50% / 14px; padding-top: 20px; border-color: color-mix(in srgb, var(--kind) 45%, var(--card-border)); }
+.arch-card.shape-db::before { content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 26px; border: 1px solid color-mix(in srgb, var(--kind) 45%, var(--card-border)); border-radius: 50%; background: color-mix(in srgb, var(--kind) 9%, var(--cluster-bg)); pointer-events: none; }
+.arch-card.shape-db .arch-far { border-radius: 50% / 14px; }
+/* External systems: outside the system, dashed and without fill */
+.arch-card.shape-ext { border-style: dashed; border-color: var(--edge-strong); background: transparent; box-shadow: none; }
+.arch-card.shape-ext:hover { box-shadow: none; border-color: var(--text-3); }
+.lg-shape { display: inline-block; width: 14px; height: 10px; margin-right: 4px; vertical-align: -1px; box-sizing: border-box; }
+.lg-shape.db { border: 1.5px solid var(--db); border-radius: 50% / 4px; }
+.lg-shape.ext { border: 1.5px dashed var(--edge-strong); border-radius: 3px; }
+
+/* Context view (C4 level 1): users, the system as one box, external systems */
+.ctx-actor { width: 100%; height: 100%; box-sizing: border-box; display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: var(--cluster-bg); border: 1px solid var(--card-border); box-shadow: var(--card-shadow); transition: opacity 0.15s; }
+.ctx-person { width: 30px; height: 30px; flex: none; fill: none; stroke: var(--arch); stroke-width: 1.6; background: color-mix(in srgb, var(--arch) 14%, transparent); border-radius: 50%; padding: 4px; box-sizing: border-box; }
+.ctx-actor-name { font-size: 14px; font-weight: 600; }
+.ctx-actor-desc { font-size: 12px; color: var(--text-2); line-height: 1.35; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ctx-actor-parts { font-size: 11px; color: var(--text-3); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-system { width: 100%; height: 100%; box-sizing: border-box; border-radius: 18px; border: 1.5px solid color-mix(in srgb, var(--arch) 55%, var(--card-border)); background: color-mix(in srgb, var(--arch) 7%, var(--cluster-bg)); box-shadow: var(--card-shadow); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
+.ctx-system-kind { font-size: 11px; font-weight: 600; color: var(--violet-text); text-transform: uppercase; letter-spacing: 0.05em; }
+.ctx-system-name { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.ctx-system-sub { font-size: 12.5px; color: var(--text-2); }
+.ctx-system-parts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-content: flex-start; flex: 1; overflow: hidden; }
+.ctx-chip { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; background: var(--chip); font-size: 12px; }
+.ctx-system-open { align-self: flex-start; font-size: 12.5px; }
+.ctx-external { width: 100%; height: 100%; box-sizing: border-box; border-radius: 12px; border: 1px dashed var(--edge-strong); padding: 10px 14px; display: flex; flex-direction: column; justify-content: center; gap: 2px; cursor: pointer; transition: opacity 0.15s; }
+.ctx-external-name { font-size: 13px; font-weight: 600; }
+.ctx-external-desc { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lg-person { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--arch); box-sizing: border-box; }
+
+/* Deployment view: compose services, scripts and ports */
+.deploy { position: absolute; inset: 0; overflow-y: auto; background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 22px 22px; }
+.deploy-inner { max-width: 1040px; margin: 0 auto; padding: 64px 32px 80px; display: flex; flex-direction: column; gap: 28px; }
+.deploy-kicker { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.deploy-title { margin: 4px 0 6px; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.deploy-h { font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 10px; }
+.deploy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.deploy-card { border-radius: 12px; border: 1px solid var(--card-border); background: var(--cluster-bg); box-shadow: var(--card-shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; min-width: 0; cursor: default; }
+.deploy-card[class*="tone-dev"], .deploy-card.tone-test { border-style: dashed; box-shadow: none; background: transparent; }
+.deploy-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.deploy-card-head .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deploy-tag { margin-left: auto; flex: none; font-size: 11px; padding: 2px 7px; border-radius: 6px; background: var(--chip); color: var(--text-2); }
+.deploy-tag.tone-dev { background: rgba(245, 158, 11, 0.12); color: var(--warn-text); }
+.deploy-tag.tone-test { color: var(--text-3); }
+.deploy-tag.tone-app { background: rgba(139, 92, 246, 0.14); color: var(--violet-text); }
+.deploy-tag.tone-data { background: rgba(20, 184, 166, 0.14); color: var(--teal-text); }
+.deploy-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deploy-cmd { align-self: flex-start; font: 500 12px var(--mono); padding: 2px 7px; border-radius: 5px; background: var(--code-bg, var(--chip)); border: 1px solid var(--line); }
+.deploy-ports { display: flex; flex-wrap: wrap; gap: 6px; }
+.deploy-port { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--card-border); background: var(--cluster-bg); font-size: 12.5px; color: var(--text-2); }
+.deploy-port .mono { color: var(--text); font-weight: 600; }
+.deploy-port.clash { border-color: rgba(245, 158, 11, 0.6); background: rgba(245, 158, 11, 0.08); }
+.deploy-note { font-size: 12px; color: var(--warn-text); margin-top: 8px; }
+
+/* Flows on the architecture map */
+.arch-flows { position: absolute; top: 52px; right: 12px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.arch-flow-menu { border-radius: 12px; padding: 4px; display: flex; flex-direction: column; min-width: 280px; max-width: 420px; animation: strataPop 0.15s ease-out; }
+.arch-flow-menu button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.arch-flow-menu button:hover { background: var(--hover); }
+.arch-flow-bar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 8; width: min(640px, calc(100% - 340px)); border-radius: 14px; padding: 10px 12px; animation: strataPop 0.2s ease-out; }
+.arch-flow-num { width: 26px; height: 26px; border-radius: 50%; background: #8b5cf6; color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 600; flex: none; }
+.arch-edge.flow .react-flow__edge-path { stroke: #8b5cf6; stroke-width: 2.4; }

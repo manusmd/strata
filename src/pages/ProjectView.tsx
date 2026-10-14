@@ -414,6 +414,11 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           focus={focus.arch}
           plan={sections.plan}
           drillFile={drillFile}
+          aiEnriched={sectionsEnabled}
+          onOpenDocs={(pageId) => {
+            setDocsPage(pageId);
+            setLens("docs");
+          }}
         />
       ) : lens === "db" ? (
         <DbMap
