@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Project, Repo, ScanProgress, timeAgo } from "../api";
-import { Route } from "../routes";
+import { LENSES, Route } from "../routes";
+import { hasMap } from "../pages/ProjectView";
 import { ProjectTile } from "./ProjectTile";
 import { VersionButton } from "../update/UpdateCard";
 import { StrataLogo } from "./StrataLogo";
@@ -25,6 +26,31 @@ function repoDot(repo: Repo): { color: string; anim?: string } {
     default:
       return { color: "var(--text-3)" };
   }
+}
+
+/** The lenses of the open project, nested under it. Lenses that need a scan wait for one. */
+function ProjectNav({ project, route, navigate }: { project: Project; route: Route; navigate: (r: Route) => void }) {
+  const ready = hasMap(project);
+  const lens = route.page === "project" ? route.lens : null;
+  return (
+    <div className="sb-nav">
+      {LENSES.map((l, i) => {
+        const enabled = ready || l.id === "home" || l.id === "plan";
+        return (
+          <div
+            key={l.id}
+            className={`sb-row sb-nav-item ${lens === l.id ? "active" : ""} ${enabled ? "" : "disabled"}`}
+            title={enabled ? `${l.label} (⌘${i + 1})` : "Available after the first repo is scanned"}
+            onClick={() => enabled && navigate({ page: "project", id: project.id, lens: l.id })}
+          >
+            <span className="sb-nav-dot" style={{ background: l.color }} />
+            <span className="grow">{l.label}</span>
+            <span className="sb-nav-key">⌘{i + 1}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }: Props) {
@@ -54,14 +80,15 @@ export function Sidebar({ projects, route, user, navigate, onAddRepo, progress }
             +
           </button>
         </div>
-        {projects.map((p) => (
+        {projects.map((p) => [
           <div key={p.id} className={`sb-row ${p.id === activeId ? "active" : ""}`} onClick={() => navigate({ page: "project", id: p.id, lens: "home" })}>
             <ProjectTile name={p.name} color={p.color} logo={p.logo} />
             <span className="grow">{p.name}</span>
             {(p.hasPlan || p.brief) && p.repos.length === 0 && <span className="sb-plan">Plan</span>}
             <span className="count">{p.repos.length}</span>
-          </div>
-        ))}
+          </div>,
+          p.id === activeId && route.page !== "settings" && <ProjectNav key={`${p.id}:nav`} project={p} route={route} navigate={navigate} />,
+        ])}
         <div className="sb-row muted" onClick={() => navigate({ page: "create" })}>
           <span style={{ width: 18, textAlign: "center" }}>+</span>New project
         </div>

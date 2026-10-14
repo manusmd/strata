@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Project, Repo, ScanFinished, ScanProgress, api, pickFolders, type PlanBrief } from "./api";
-import { Route } from "./routes";
+import { LENSES, Route } from "./routes";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { CreateProject } from "./pages/CreateProject";
@@ -68,6 +68,12 @@ export default function App() {
       if (e.metaKey && e.key.toLowerCase() === "j") {
         e.preventDefault();
         setAskOpen((o) => !o);
+      }
+      // ⌘1…⌘6 switch the open project's lens, in sidebar order.
+      const n = Number(e.key);
+      if (e.metaKey && n >= 1 && n <= LENSES.length) {
+        e.preventDefault();
+        setRoute((r) => (r.page === "project" ? { ...r, lens: LENSES[n - 1].id } : r));
       }
       if (e.metaKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -207,7 +213,11 @@ export default function App() {
                 <span>Projects</span>/<b>New project</b>
               </>
             )}
-            {route.page === "project" && current && <b>{current.name}</b>}
+            {route.page === "project" && current && (
+              <>
+                <span>{current.name}</span>/<b>{LENSES.find((l) => l.id === route.lens)?.label}</b>
+              </>
+            )}
             {route.page === "settings" && current && (
               <>
                 <span>{current.name}</span>/<b>Settings</b>
@@ -218,7 +228,6 @@ export default function App() {
             <ProjectToolbar
               project={current}
               lens={route.lens}
-              setLens={(lens) => setRoute({ ...route, lens })}
               level={level}
               onLevel={(l) => setZoomRequest((r) => ({ level: l, n: (r?.n ?? 0) + 1 }))}
               onRescan={() => act(() => api.scanProject(current.id))}

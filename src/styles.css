@@ -1258,3 +1258,13 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .docs-switch.on { background: #8b5cf6; }
 .docs-switch > span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: left 0.15s; }
 .docs-switch.on > span { left: 14px; }
+
+/* Project lenses, nested under the open project in the sidebar */
+.sb-nav { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 6px 17px; padding-left: 8px; border-left: 1px solid var(--line); }
+.sb-nav-item { height: 28px; font-size: 13px; color: var(--text-2); }
+.sb-nav-item.active { color: var(--text); }
+.sb-nav-item.disabled { opacity: 0.45; cursor: default; }
+.sb-nav-item.disabled:hover { background: transparent; }
+.sb-nav-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; margin: 0 2px 0 3px; }
+.sb-nav-key { font-size: 11px; color: var(--text-3); opacity: 0; transition: opacity 0.15s; }
+.sb-nav-item:hover .sb-nav-key { opacity: 1; }

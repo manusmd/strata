@@ -16,7 +16,7 @@ import { archSubject, tableSubject, type Subject } from "../summary/subjects";
 import { buildArchModel } from "../map/archModel";
 import { buildDbModel } from "../map/dbModel";
 import { useSectionPlan } from "../sections/useSections";
-import { LENSES, Lens } from "../routes";
+import { Lens } from "../routes";
 
 export type Progress = Record<string, ScanProgress>;
 
@@ -28,7 +28,6 @@ const isScanning = (p: Project) => p.repos.some((r) => r.scanStatus === "scannin
 type ToolbarProps = {
   project: Project;
   lens: Lens;
-  setLens: (l: Lens) => void;
   level: ZoomLevel;
   onLevel: (l: ZoomLevel) => void;
   onRescan: () => void;
@@ -36,7 +35,7 @@ type ToolbarProps = {
   onToggleAsk: () => void;
 };
 
-export function ProjectToolbar({ project, lens, setLens, level, onLevel, onRescan, askOpen, onToggleAsk }: ToolbarProps) {
+export function ProjectToolbar({ project, lens, level, onLevel, onRescan, askOpen, onToggleAsk }: ToolbarProps) {
   // The map controls only make sense once there is a graph to look at.
   const ready = hasMap(project);
   const title = ready ? undefined : "Available after the first repo is scanned";
@@ -44,19 +43,10 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
 
   return (
     <>
-      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" || lens === "plan" || lens === "docs" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
+      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "code" ? "flex" : "none", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
         {LEVELS.map((l) => (
           <button key={l} className={`level-btn ${l === level ? "on" : ""}`} onClick={() => onLevel(l)}>
             {l}
-          </button>
-        ))}
-      </div>
-      <div className="spacer" data-tauri-drag-region />
-      <div className="seg">
-        {LENSES.map((l) => (
-          <button key={l.id} className={`${lens === l.id ? "on" : ""} ${ready || l.id === "home" || l.id === "plan" ? "" : "disabled-ui"}`} title={l.id === "home" || l.id === "plan" ? undefined : title} onClick={() => setLens(l.id)}>
-            <span className="dot" style={{ background: l.color }} />
-            {l.label}
           </button>
         ))}
       </div>
