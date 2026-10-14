@@ -81,7 +81,7 @@ export function pageMarkdown(ctx: DocsCtx, defs: PageDef[], def: PageDef, page: 
     const intro = block("intro");
     if (intro) out.push(prose(ctx, intro.text, link), "");
     def.steps!.forEach((s, i) => {
-      const n = ctx.arch.byId.get(s);
+      const n = ctx.cv.byId.get(s) ?? ctx.arch.byId.get(s);
       const b = block(`step:${i}`);
       out.push(`${i + 1}. ${n ? link({ kind: "component", label: n.name, target: n.id }) : s}${b ? ` — ${prose(ctx, b.text, link)}` : ""}`);
     });

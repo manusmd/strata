@@ -57,7 +57,6 @@ const SLOTS = {
 
 export function pageInput(ctx: DocsCtx, page: PageDef, summaries: Map<string, string>): PageInput {
   const { arch, graph, project } = ctx;
-  const name = (id: string) => arch.byId.get(id)?.name ?? id;
 
   if (page.kind === "start") {
     const s = projectSubject(project, arch, graph, summaries);
@@ -74,17 +73,20 @@ export function pageInput(ctx: DocsCtx, page: PageDef, summaries: Map<string, st
   }
 
   if (page.kind === "section") {
-    const members = page.members!;
+    // System pages follow the container view, which has parts the full model doesn't ("17 web APIs").
+    const cv = ctx.cv;
+    const cvName = (id: string) => cv.byId.get(id)?.name ?? id;
+    const members = page.members!.filter((m) => cv.byId.has(m));
     const lines = members.map((m) => {
-      const n = arch.byId.get(m)!;
+      const n = cv.byId.get(m)!;
       return `- ${n.name} [${n.kind}] ${n.detail}${summaries.get(m) ? ` — ${summaries.get(m)}` : ""}`;
     });
     const inside = new Set(members);
-    const links = arch.edges.filter((e) => inside.has(e.source) || inside.has(e.target)).slice(0, 40).map((e) => `- ${name(e.source)} → ${name(e.target)}: ${e.reasons.slice(0, 2).join("; ")}`);
+    const links = cv.edges.filter((e) => !e.minor && (inside.has(e.source) || inside.has(e.target))).slice(0, 40).map((e) => `- ${cvName(e.source)} → ${cvName(e.target)}: ${e.reasons.slice(0, 2).join("; ")}`);
     const slots = SLOTS.section;
     return {
       // Summaries only enrich the prompt; a new summary shouldn't make the page stale.
-      hash: hashOf(...members.map((m) => `${m}|${arch.byId.get(m)?.detail}`), ...links),
+      hash: hashOf(...members.map((m) => `${m}|${cv.byId.get(m)?.detail}`), ...links),
       prompt: [`Page "${page.title}" of the project "${project.name}": a group of components that sit in the same column of the architecture map.`, "Components:", ...lines, links.length ? "Connections:" : "", ...links, "", textsRequest(slots, "page")].filter((x) => x !== "").join("\n"),
       files: [],
       inputs: {},

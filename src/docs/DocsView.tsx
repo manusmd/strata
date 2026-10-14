@@ -38,7 +38,21 @@ export function DocsView({ project, graph, workspace, pageId, onPage, onOpen }: 
   const defs = useMemo(() => buildOutline(ctx), [ctx]);
   const summaryEntries = useSummaries(project.id);
   const summaries = useMemo(() => summaryStore.texts(project.id), [project.id, summaryEntries]);
-  const inputs = useMemo(() => new Map(defs.map((d) => [d.id, pageInput(ctx, d, summaries)])), [defs, ctx, summaries]);
+  // One page that can't be described mustn't take the whole Docs lens down: it gets an empty input instead.
+  const inputs = useMemo(
+    () =>
+      new Map(
+        defs.map((d) => {
+          try {
+            return [d.id, pageInput(ctx, d, summaries)];
+          } catch (e) {
+            console.error(`docs: couldn't prepare ${d.id}`, e);
+            return [d.id, { hash: "error", prompt: "", files: [], inputs: {}, slots: [] } as PageInput];
+          }
+        }),
+      ),
+    [defs, ctx, summaries],
+  );
   const docs = useDocs(project.id);
 
   useEffect(() => {
