@@ -4,7 +4,7 @@ import type { Chip, DocsCtx } from "./outline";
 /** A piece of prose: plain text, inline code, bold, or a resolved reference. */
 export type Seg = { t: "text" | "code" | "bold"; text: string } | { t: "chip"; chip: Chip };
 
-const TOKEN = /\[\[(component|file|table|symbol):([^\]]+)\]\]|`([^`]+)`|\*\*([^*]+)\*\*/g;
+const TOKEN = /\[\[(component|file|table|symbol|route):([^\]]+)\]\]|`([^`]+)`|\*\*([^*]+)\*\*/g;
 
 /** Finds what a link token names. Unknown names stay plain text: docs never link to things that don't exist. */
 export function resolve(ctx: DocsCtx, kind: string, raw: string): Chip | null {
@@ -23,6 +23,8 @@ export function resolve(ctx: DocsCtx, kind: string, raw: string): Chip | null {
     const f = exact ?? [...ctx.fileByLabel.entries()].find(([label]) => label.endsWith(`/${value}`) || label === value)?.[1];
     return f ? { kind: "file", label: f.path ?? value, target: f.id } : null;
   }
+  // A screen of an app, by its URL: opens its Screens page.
+  if (kind === "route") return value.startsWith("/") ? { kind: "route", label: value, target: value } : null;
   if (kind === "symbol") {
     const name = value.replace(/\(\)$/, "");
     const candidates = ctx.graph.nodes.filter((n) => n.kind === "symbol" && n.name === name);
@@ -50,7 +52,7 @@ export function segments(ctx: DocsCtx, text: string): Seg[] {
 }
 
 /** Plain words of a text without tokens, for diffs. */
-export const plain = (text: string) => text.replace(/\[\[(?:component|file|table|symbol):([^\]]+)\]\]/g, (_, v) => v.replace(/^.*\//, "")).replace(/\*\*|`/g, "");
+export const plain = (text: string) => text.replace(/\[\[(?:component|file|table|symbol|route):([^\]]+)\]\]/g, (_, v) => v.replace(/^.*\//, "")).replace(/\*\*|`/g, "");
 
 /** A word diff: unchanged, removed and added runs, for "What changed". */
 export type DiffRun = { kind: "same" | "del" | "add"; text: string };

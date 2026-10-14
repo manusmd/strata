@@ -89,10 +89,17 @@ export function DocsView({ project, graph, workspace, pageId, onPage, onOpen }: 
   const write = (d: PageDef) => docsStore.write(project, ctx, d, summaries, true);
   const writeAll = (list: PageDef[]) => docsStore.writeAll(project, ctx, list, summaries);
 
+  // A screen link goes to the Screens page that has it, scrolled to the screen.
+  const openRoute = (path: string) => {
+    const page = defs.find((d) => d.screens?.some((s) => s.path === path));
+    if (!page) return;
+    go(page.id);
+    setTimeout(() => document.getElementById(`doc-screen:${path}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+  };
   const chipProps: ChipProps = {
     ctx,
     summaries,
-    onOpen: (chip) => onOpen(chip, def),
+    onOpen: (chip) => (chip.kind === "route" ? openRoute(chip.target!) : onOpen(chip, def)),
     docsPageOf: (chip) => {
       const target = chip.kind === "component" ? defs.find((d) => d.node === chip.target) : chip.kind === "table" ? defs.find((d) => d.tables?.includes(chip.target!)) : undefined;
       return target && target.id !== def.id ? () => go(target.id) : null;
@@ -472,6 +479,60 @@ function Page({ ctx, defs, def, stored, input, status, error, chipProps, onWrite
           <ReadNext defs={defs} onGo={onGo} />
         </>
       )}
+
+      {def.kind === "screens" && (
+        <>
+          {blocks.find((b) => b.key === "intro") ? prose(blocks.find((b) => b.key === "intro")!) : placeholder(1)}
+          <div className="docs-screens">
+            {def.screens!.map((s) => {
+              const f = ctx.nodes.get(s.fileId);
+              const b = blocks.find((x) => x.key === `screen:${s.path}`);
+              return (
+                <div key={s.path} id={`doc-screen:${s.path}`} className="card docs-screen">
+                  <div className="docs-screen-head">
+                    <span className="mono docs-screen-path">{s.path}</span>
+                    {f && <RefChip chip={{ kind: "file", label: f.path?.split("/").slice(-2).join("/") ?? s.path, target: f.id }} {...chipProps} />}
+                  </div>
+                  {b ? (
+                    <div className="docs-text" style={{ fontSize: 14.5 }}>
+                      <Prose text={b.text} {...chipProps} />
+                    </div>
+                  ) : (
+                    <div className="faint" style={{ fontSize: 13 }}>{writing ? "Claude is writing…" : "What you can do here appears once the page is written."}</div>
+                  )}
+                  {(s.uses.length > 0 || s.tables.length > 0) && (
+                    <div className="docs-screen-meta">
+                      {s.uses.map((u) => (
+                        <span key={u} className="doc-chip static mono">{u}</span>
+                      ))}
+                      {s.tables.map((t) => {
+                        const table = [...ctx.db.tables.values()].find((x) => x.name === t);
+                        return table ? <RefChip key={t} chip={{ kind: "table", label: t, target: table.id }} {...chipProps} /> : null;
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {def.kind === "tasks" &&
+        (blocks.length ? (
+          <div className="docs-tasks">
+            {blocks.map((b) => (
+              <div key={b.key} className="docs-task">
+                <span className="docs-task-name">{b.heading}</span>
+                <span className="docs-text" style={{ fontSize: 14 }}>
+                  <Prose text={b.text} {...chipProps} />
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          placeholder(2)
+        ))}
 
       {def.kind === "component" && (
         <>

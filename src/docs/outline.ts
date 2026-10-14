@@ -3,6 +3,7 @@ import type { ArchEdge, ArchModel, ArchNode } from "../map/archModel";
 import type { DbModel, DbTable } from "../map/dbModel";
 import { ARCH_ROLE, ROLES } from "../arch/roles";
 import { containerView } from "../map/archModel";
+import { screenAreas, screensOf, type Screen } from "./screens";
 
 /** Everything a docs page is built from: the scan, as the maps see it. */
 export type DocsCtx = {
@@ -18,7 +19,7 @@ export type DocsCtx = {
   repoName: (id: string | null) => string;
 };
 
-export type PageKind = "start" | "section" | "component" | "data" | "flow" | "glossary";
+export type PageKind = "start" | "screens" | "tasks" | "section" | "component" | "data" | "flow" | "glossary";
 
 /** A page of the outline. The outline comes from the scan, so it exists before Claude writes anything. */
 export type PageDef = {
@@ -33,9 +34,12 @@ export type PageDef = {
   members?: string[];
   tables?: string[];
   steps?: string[];
+  /** screens: the app and the screens of one area of it. */
+  app?: string;
+  screens?: Screen[];
 };
 
-export const GROUPS = ["Start here", "System", "Components", "Libraries", "Data model", "Flows", "Glossary"] as const;
+export const GROUPS = ["Start here", "Screens", "System", "Components", "Libraries", "Data model", "Flows", "Glossary"] as const;
 export type Group = (typeof GROUPS)[number];
 
 export const slug = (s: string) => s.toLowerCase().replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "page";
@@ -79,6 +83,15 @@ export function buildOutline(ctx: DocsCtx): PageDef[] {
   const { arch, cv, db } = ctx;
   const pages: PageDef[] = [{ id: "start", kind: "start", group: "Start here", title: "Overview", mono: false }];
 
+  // Screens: where to do what in the apps, one page per area, and a "Where do I…?" index on top.
+  const apps = screensOf(ctx);
+  if (apps.length) pages.push({ id: "screens:tasks", kind: "tasks", group: "Screens", title: "Where do I…?", mono: false });
+  for (const { app, screens } of apps)
+    for (const { area, screens: s } of screenAreas(screens)) {
+      const label = area === "home" ? "/" : area === "more" ? "Other screens" : area === "all" ? "All screens" : `/${area}`;
+      pages.push({ id: `screens:${app.id}:${area}`, kind: "screens", group: "Screens", title: apps.length > 1 ? `${app.name} ${label}` : label, mono: label.startsWith("/") || apps.length > 1, app: app.id, screens: s });
+    }
+
   // System pages follow the architectural roles, in the map's reading order.
   ROLES.forEach((title, role) => {
     const members = cv.nodes.filter((n) => shown(n) && ARCH_ROLE[n.kind] === role).map((n) => n.id);
@@ -104,7 +117,7 @@ export function buildOutline(ctx: DocsCtx): PageDef[] {
 
 // ---------- Facts: straight from the scan, never written by Claude ----------
 
-export type ChipKind = "component" | "file" | "table" | "symbol" | "env" | "text";
+export type ChipKind = "component" | "file" | "table" | "symbol" | "route" | "env" | "text";
 /** A clickable reference on a page. `target` is what it opens: an arch node, a file or a table. */
 export type Chip = { kind: ChipKind; label: string; target?: string; sub?: string };
 export type FactRow = { label: string; items: Chip[] };

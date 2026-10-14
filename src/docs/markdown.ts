@@ -2,12 +2,14 @@ import { componentFacts, dataFacts, runChecklist, sectionFacts, slug, type Chip,
 import { resolve } from "./links";
 import type { StoredPage } from "./store";
 
-const FOLDER: Record<PageDef["kind"], string> = { start: "", section: "system/", component: "components/", data: "data/", flow: "flows/", glossary: "" };
+const FOLDER: Record<PageDef["kind"], string> = { start: "", screens: "screens/", tasks: "", section: "system/", component: "components/", data: "data/", flow: "flows/", glossary: "" };
 
 /** Where a page lands in the export, relative to the docs folder's parent. */
 export function docPath(def: PageDef): string {
   if (def.kind === "start") return "docs/README.md";
   if (def.kind === "glossary") return "docs/glossary.md";
+  if (def.kind === "tasks") return "docs/where-do-i.md";
+  if (def.kind === "screens") return `docs/screens/${slug(def.id.split(":").slice(1).join("-"))}.md`;
   return `docs/${FOLDER[def.kind]}${slug(def.title)}.md`;
 }
 
@@ -34,6 +36,7 @@ function linker(ctx: DocsCtx, defs: PageDef[], dir: string, def: PageDef): Linke
   return (chip) => {
     const toPage = (d: PageDef | undefined, anchor = "") => (d ? `[${chip.label}](${relative(here, `${dir.replace(/\/$/, "")}/${docPath(d)}`)}${anchor})` : `\`${chip.label}\``);
     if (chip.kind === "component") return toPage(pageOfNode.get(chip.target!));
+    if (chip.kind === "route") return toPage(defs.find((d) => d.screens?.some((s) => s.path === chip.target)), `#${slug(chip.label)}`);
     if (chip.kind === "table") return toPage(dataPage(chip.target!), `#${slug(chip.label)}`);
     if ((chip.kind === "file" || chip.kind === "symbol") && chip.target) {
       const to = fileAbs(chip.target);
@@ -85,6 +88,22 @@ export function pageMarkdown(ctx: DocsCtx, defs: PageDef[], def: PageDef, page: 
       const b = block(`step:${i}`);
       out.push(`${i + 1}. ${n ? link({ kind: "component", label: n.name, target: n.id }) : s}${b ? ` — ${prose(ctx, b.text, link)}` : ""}`);
     });
+    out.push("");
+  } else if (def.kind === "screens") {
+    const intro = block("intro");
+    if (intro) out.push(prose(ctx, intro.text, link), "");
+    for (const s of def.screens!) {
+      const f = ctx.nodes.get(s.fileId);
+      const b = block(`screen:${s.path}`);
+      out.push(`### ${s.path}`, "");
+      if (b) out.push(prose(ctx, b.text, link), "");
+      out.push(`- **Page:** ${f ? link({ kind: "file", label: f.path ?? s.path, target: f.id }) : s.path}`);
+      if (s.uses.length) out.push(`- **Uses:** ${s.uses.map((u) => `\`${u}\``).join(", ")}`);
+      if (s.tables.length) out.push(`- **Data:** ${s.tables.map((t) => `\`${t}\``).join(", ")}`);
+      out.push("");
+    }
+  } else if (def.kind === "tasks") {
+    for (const b of blocks) out.push(`- **${b.heading}** — ${prose(ctx, b.text, link)}`);
     out.push("");
   } else if (def.kind === "glossary") {
     for (const b of blocks) out.push(`**${b.heading}** — ${prose(ctx, b.text, link)}`, "");

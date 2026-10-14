@@ -1,5 +1,6 @@
 import { archSubject, hashOf, projectSubject, tableSubject } from "../summary/subjects";
 import { edgeBetween, unitFiles, type DocsCtx, type PageDef } from "./outline";
+import { screensOf as screensOfCtx } from "./screens";
 
 /** What a page is written from: the description, the files Claude reads, and what makes it stale. */
 export type PageInput = {
@@ -62,6 +63,44 @@ export function pageInput(ctx: DocsCtx, page: PageDef, summaries: Map<string, st
     const s = projectSubject(project, arch, graph, summaries);
     const slots = SLOTS.start;
     return { hash: s.hash, prompt: `Page: "Start here", the first page a new developer reads.\n${s.prompt}\n\n${textsRequest(slots, "overview page")}`, files: s.files, inputs: {}, slots };
+  }
+
+  if (page.kind === "screens") {
+    const screens = page.screens!;
+    const app = ctx.cv.byId.get(page.app!);
+    const lines = screens.map((s, i) => `${i + 1}. ${s.path} — page file ${labelOf(ctx, s.fileId)}${s.uses.length ? `; uses ${s.uses.join(", ")}` : ""}${s.tables.length ? `; data: ${s.tables.join(", ")}` : ""}`);
+    const files = screens.slice(0, 4).map((s) => labelOf(ctx, s.fileId)).flatMap((l) => (abs(ctx, l) ? [{ path: abs(ctx, l)!, label: l }] : []));
+    return {
+      hash: hashOf("screens", ...screens.map((s) => `${s.path}|${s.uses.join()}|${s.tables.join()}|${fileHash(ctx, s.fileId)}`)),
+      prompt: [
+        `Page "${page.title}" of the user guide for ${app?.name ?? "the app"} in the project "${project.name}": the screens in this part of the app, so a new developer knows where to do what.`,
+        "Screens (URL, the file that renders it, what it pulls in):",
+        ...lines,
+        "",
+        `Reply with JSON: {"intro": "…", "screens": ["…", …]} — a 1–2 sentence intro about this part of the app, then exactly ${screens.length} strings, one per screen in order, each one sentence on what a user can do there (start with a verb, e.g. "Connect calendars and pick the default one."). Don't repeat the URL.`,
+      ].join("\n"),
+      files,
+      inputs: inputsOf(ctx, screens.map((s) => s.fileId)),
+      slots: [{ key: "intro" }, ...screens.map((s) => ({ key: `screen:${s.path}`, heading: s.path }))],
+    };
+  }
+
+  if (page.kind === "tasks") {
+    const all = screensOfCtx(ctx);
+    const lines = all.flatMap(({ app, screens }) => screens.map((s) => `- ${s.path}${all.length > 1 ? ` (${app.name})` : ""}${s.uses.length ? ` — ${s.uses.join(", ")}` : ""}`));
+    return {
+      hash: hashOf("tasks", ...lines),
+      prompt: [
+        `Page "Where do I…?" of the user guide for the project "${project.name}": the things people most often want to do, and on which screen.`,
+        "Screens (URL — what they pull in):",
+        ...lines.slice(0, 200),
+        "",
+        'Pick the 10–20 most important tasks. Reply with JSON: {"tasks": [{"task": "Change my availability", "route": "/availability", "text": "one short sentence on how"}]} — "route" must be one of the URLs above, exactly.',
+      ].join("\n"),
+      files: [],
+      inputs: {},
+      slots: [],
+    };
   }
 
   if (page.kind === "component") {
@@ -154,8 +193,20 @@ export function pageInput(ctx: DocsCtx, page: PageDef, summaries: Map<string, st
 }
 
 /** Claude's JSON → texts per slot key (and headings for the glossary, whose terms Claude picks). */
-export function parseReply(page: PageDef, input: PageInput, json: string): { key: string; heading?: string; text: string }[] {
+export function parseReply(page: PageDef, input: PageInput, json: string, ctx?: DocsCtx): { key: string; heading?: string; text: string }[] {
   const raw = JSON.parse(json);
+  if (page.kind === "tasks") {
+    // Only tasks on screens that exist; the screen is kept as a link token in front of the text.
+    const known = new Set(ctx ? screensOfCtx(ctx).flatMap((a) => a.screens.map((s) => s.path)) : []);
+    return (Array.isArray(raw?.tasks) ? raw.tasks : [])
+      .filter((t: any) => t?.task && t?.route && (!ctx || known.has(String(t.route))))
+      .slice(0, 24)
+      .map((t: any) => ({ key: `task:${String(t.task).toLowerCase().replace(/\W+/g, "-")}`, heading: String(t.task), text: `[[route:${t.route}]] ${String(t.text ?? "")}`.trim() }));
+  }
+  if (page.kind === "screens") {
+    const items: unknown[] = Array.isArray(raw?.screens) ? raw.screens : [];
+    return input.slots.map((s, i) => ({ ...s, text: String(i === 0 ? raw?.intro ?? "" : items[i - 1] ?? "") })).filter((b) => b.text);
+  }
   if (page.kind === "glossary") {
     const terms = Array.isArray(raw?.terms) ? raw.terms : [];
     return terms

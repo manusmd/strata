@@ -1402,3 +1402,14 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .comp-card { gap: 4px; }
 .comp-out { padding: 10px 12px; justify-content: center; }
 .comp-panel { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 340px; z-index: 9; }
+
+/* Docs: Screens pages and "Where do I…?" */
+.docs-screens { display: flex; flex-direction: column; gap: 10px; }
+.docs-screen { padding: 12px 14px; border-radius: 12px; display: flex; flex-direction: column; gap: 6px; scroll-margin: 80px; }
+.docs-screen-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.docs-screen-path { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-screen-meta { display: flex; flex-wrap: wrap; gap: 5px; }
+.docs-tasks { display: flex; flex-direction: column; border-radius: 12px; border: 1px solid var(--card-border); background: var(--card); overflow: hidden; }
+.docs-task { display: grid; grid-template-columns: minmax(180px, 34%) 1fr; gap: 14px; padding: 11px 14px; align-items: baseline; }
+.docs-task + .docs-task { border-top: 1px solid var(--line); }
+.docs-task-name { font-size: 14px; font-weight: 600; }

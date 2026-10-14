@@ -111,7 +111,7 @@ export const docsStore = {
         update(project.id, (s) => (s.run ? { ...s, run: { ...s.run, current: def.id } } : s));
         try {
           const json = await api.writeDocPage({ projectId: project.id, nodeId: `docs:${def.id}`, hash: input.hash, prompt: input.prompt, files: input.files, model: project.aiModel });
-          const fresh = parseReply(def, input, json);
+          const fresh = parseReply(def, input, json, ctx);
           if (!fresh.length) throw new Error("Claude's page was empty.");
           const old = get(project.id).pages[def.id];
           await save(project.id, { id: def.id, hash: input.hash, writtenAt: Date.now(), model: project.aiModel, read: input.files.map((f) => f.label), inputs: input.inputs, blocks: merge(old, fresh) });

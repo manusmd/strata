@@ -39,6 +39,23 @@ function mockDocPage(prompt: string, files: { label: string }[]): string {
   const c = (i: number) => (comps[i] ? `[[component:${comps[i]}]]` : own ? `[[component:${own}]]` : "the app");
   const f = (i: number) => (files[i] ? `[[file:${files[i].label}]]` : "its entry file");
   const t = (i: number) => (tables[i] ?? tableList[i] ? `[[table:${tables[i] ?? tableList[i]}]]` : "the database");
+  if (prompt.includes('{"tasks"')) {
+    const routes = [...prompt.matchAll(/^- (\/\S*)/gm)].map((m) => m[1]);
+    const pick = (re: RegExp) => routes.find((r) => re.test(r));
+    const tasks = [
+      ["Change my availability", pick(/availability/), "Set your working hours and date overrides."],
+      ["Connect a calendar", pick(/settings.*calendar|apps/), "Install the calendar app and pick the default calendar."],
+      ["Update my profile", pick(/settings.*(profile|general|my-account)/), "Change your name, photo and time zone."],
+      ["See my bookings", pick(/bookings/), "Upcoming, past and cancelled bookings in one list."],
+      ["Sign in", pick(/auth.*login|login/), "Email and password, or a connected provider."],
+    ].filter((t) => t[1]);
+    return JSON.stringify({ tasks: tasks.map(([task, route, text]) => ({ task, route, text })) });
+  }
+  if (prompt.includes('"screens": ['))
+    return JSON.stringify({
+      intro: "These screens are where users manage this part of the app.",
+      screens: Array.from({ length: Number(prompt.match(/exactly (\d+) strings/)?.[1] ?? 1) }, (_, i) => ["Review and change the main settings.", "Connect and manage accounts.", "See a list and open details.", "Create something new step by step."][i % 4]),
+    });
   if (prompt.includes('"terms"'))
     return JSON.stringify({ terms: (tableList.length ? tableList : ["order", "customer", "invoice"]).slice(0, 8).map((n, i) => ({ term: n.replace(/^\w/, (x) => x.toUpperCase()), text: `A ${n} as the business sees it. It is stored in [[table:${n}]]${i % 2 ? ` and created through ${c(0)}` : ""}.` })) });
   if (prompt.includes('"intro"')) {

@@ -3,8 +3,8 @@ import { KIND_COLOR } from "../map/archModel";
 import { segments, type DiffRun } from "./links";
 import type { Chip, DocsCtx } from "./outline";
 
-const CHIP_COLOR: Record<string, string> = { component: "var(--arch)", file: "var(--code)", symbol: "var(--code)", table: "var(--db)", env: "var(--text-3)", text: "var(--text-3)" };
-const OPEN_LABEL: Record<string, string> = { component: "Open in Architecture", file: "Open in Code", symbol: "Open in Code", table: "Open in Database" };
+const CHIP_COLOR: Record<string, string> = { route: "var(--warn)", component: "var(--arch)", file: "var(--code)", symbol: "var(--code)", table: "var(--db)", env: "var(--text-3)", text: "var(--text-3)" };
+const OPEN_LABEL: Record<string, string> = { route: "Show the screen", component: "Open in Architecture", file: "Open in Code", symbol: "Open in Code", table: "Open in Database" };
 
 export type ChipProps = {
   ctx: DocsCtx;
