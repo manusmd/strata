@@ -18,6 +18,8 @@ export type ArchNode = {
   datastore?: { engine: string; tables: string[] };
   external?: { via: string[] };
   missing?: { packageName: string; uses: number; repo?: WorkspacePackage };
+  /** Packages folded into this one: nested in its folder, or a crowd of siblings shown as one group. */
+  parts?: string[];
 };
 
 export type ArchEdgeKind = "imports" | "calls" | "data" | "uses" | "depends";
@@ -32,6 +34,10 @@ export type ArchEdge = {
   inferred?: boolean;
   /** Files in the source unit that make up this connection (for jumping to code). */
   files: string[];
+  /** Imports of a library: code structure, not architecture. Drawn only when one end is selected. */
+  minor?: boolean;
+  /** Container view: the shared libraries this connection goes through (web → Stripe via lib). */
+  via?: string[];
 };
 
 export type ArchModel = { nodes: ArchNode[]; edges: ArchEdge[]; byId: Map<string, ArchNode>; fileUnit: Map<string, string> };
@@ -99,6 +105,8 @@ const EXTERNAL_PACKAGES: [RegExp, Ext][] = [
   [/^googleapis$|^@googleapis\//, { key: "google", name: "Google APIs", category: "API" }],
   [/^@octokit\//, { key: "github", name: "GitHub API", category: "API" }],
   [/^@slack\//, { key: "slack", name: "Slack", category: "Messaging" }],
+  [/^@microsoft\/microsoft-graph-client$|^@azure\/msal-/, { key: "microsoft", name: "Microsoft 365", category: "API" }],
+  [/^@zoom\//, { key: "zoom", name: "Zoom", category: "Video" }],
   [/^discord\.js$/, { key: "discord", name: "Discord", category: "Messaging" }],
   [/^algoliasearch$/, { key: "algolia", name: "Algolia", category: "Search" }],
   [/^@upstash\/redis$/, { key: "upstash", name: "Upstash Redis", category: "Cache" }],
@@ -114,6 +122,8 @@ const EXTERNAL_HOSTS: [RegExp, string][] = [
   [/googleapis\.com$/, "google"],
   [/github\.com$/, "github"],
   [/slack\.com$/, "slack"],
+  [/(^|\.)microsoft(online)?\.com$|(^|\.)office\.com$|(^|\.)live\.com$/, "microsoft"],
+  [/(^|\.)zoom\.us$/, "zoom"],
 ];
 
 const IMAGE_KINDS: [RegExp, ArchKind, string][] = [
@@ -145,17 +155,25 @@ const LAYER: Record<ArchKind, ArchNode["layer"]> = {
 
 export const shortName = (n: string) => n.replace(/^@[^/]+\//, "");
 
+const EXAMPLE_DIR = /(^|\/)(examples?|example-[\w-]+|demos?|samples?|templates?|playgrounds?|fixtures?|sandbox)(\/|$)/i;
+
 function classify(meta: Record<string, any>, dir: string, name: string): { kind: ArchKind; label: string } | null {
   const deps: string[] = meta.deps ?? [];
   const all = [...deps, ...(meta.devDeps ?? [])];
   const scripts: Record<string, string> = meta.scripts ?? {};
   const lower = `${dir}/${name}`.toLowerCase();
   // End-to-end test packages connect to everything; they're not part of the running system.
-  if (/(^|\/)(e2e|tests?|playwright|cypress)(\/|$)|[-/]e2e$/.test(lower) && !deps.some((d) => FRAMEWORKS.some(([f]) => f === d))) return null;
+  if (/(^|\/)(e2e|tests?|testing|test-utils|playwright|cypress)(\/|$)|[-/]e2e$/.test(lower) && !deps.some((d) => FRAMEWORKS.some(([f]) => f === d))) return null;
+  // Examples, templates and playgrounds show how to use the system; they aren't part of it.
+  if (EXAMPLE_DIR.test(dir)) return null;
+  // A shared package (packages/, libs/) that nothing starts is code other parts run, even with a server framework in it.
+  const shared = /^(packages|libs?|modules)\//.test(dir);
+  const starts = Object.keys(scripts).some((s) => /^(dev|start|serve)(:|$)/.test(s)) || (meta.ports ?? []).length > 0;
   for (const [dep, fw] of FRAMEWORKS) {
     // Frameworks count when they're runtime deps; desktop/extension tooling usually sits in devDependencies.
     if (!(deps.includes(dep) || (DEV_FRAMEWORKS.has(dep) && all.includes(dep)))) continue;
     if (fw.label === "tRPC" && deps.some((d) => UI_LIBS.includes(d))) continue;
+    if (shared && !starts && (fw.kind === "Service" || fw.kind === "Worker")) return { kind: "Library", label: `${fw.label} library` };
     const mcp = fw.kind === "Service" && fw.label !== "MCP server" && deps.includes("@modelcontextprotocol/sdk");
     return { kind: fw.kind, label: mcp ? `${fw.label} + MCP` : fw.label };
   }
@@ -164,7 +182,8 @@ function classify(meta: Record<string, any>, dir: string, name: string): { kind:
     const ui = deps.find((d) => UI_LIBS.includes(d))!;
     return { kind: "App", label: `Vite + ${ui === "solid-js" ? "Solid" : ui[0].toUpperCase() + ui.slice(1)}` };
   }
-  if (meta.hasBin || deps.some((d) => CLI_LIBS.includes(d))) return { kind: "CLI", label: "Command line" };
+  // A shared package with a bin (seed scripts, codegen) is still a package; a real CLI says so in its name or deps.
+  if ((meta.hasBin && (!shared || /cli$/.test(name))) || deps.some((d) => CLI_LIBS.includes(d))) return { kind: "CLI", label: "Command line" };
   const runnable = /\bnode\b|\btsx\b|\bbun\b|\bdeno\b|ts-node/.test(`${scripts.start ?? ""} ${scripts.dev ?? ""}`);
   if (runnable && !/^(packages|libs?)\//.test(dir)) return { kind: "Service", label: "Node service" };
   return { kind: "Library", label: deps.some((d) => UI_LIBS.includes(d)) ? "UI library" : "Library" };
@@ -205,6 +224,54 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
   }
   for (const [f, u] of fileUnit) if (!shownUnits.has(u)) fileUnit.delete(f);
 
+  // Packages inside another package's folder (an app store's integrations) are part of it.
+  const foldInto = new Map<string, string>();
+  const withDir = [...nodes.values()].filter((n) => n.unit?.dir);
+  for (const n of withDir) {
+    if (n.kind !== "Library") continue;
+    const parent = withDir.filter((p) => p !== n && p.repoId === n.repoId && n.unit!.dir.startsWith(`${p.unit!.dir}/`)).sort((a, b) => b.unit!.dir.length - a.unit!.dir.length)[0];
+    if (parent) foldInto.set(n.id, parent.id);
+  }
+  // A crowd of sibling libraries without a parent package (packages/platform/*) becomes one group.
+  const siblings = new Map<string, ArchNode[]>();
+  for (const n of withDir) {
+    if (n.kind !== "Library" || foldInto.has(n.id)) continue;
+    const dir = n.unit!.dir.split("/").slice(0, -1).join("/");
+    if (dir.includes("/")) siblings.set(`${n.repoId}:${dir}`, [...(siblings.get(`${n.repoId}:${dir}`) ?? []), n]);
+  }
+  for (const [key, members] of siblings) {
+    if (members.length < 5) continue;
+    const dir = key.slice(key.indexOf(":") + 1);
+    const id = `group:${key}`;
+    add({
+      id,
+      kind: "Library",
+      name: dir.split("/").pop()!,
+      detail: `${members.length} packages`,
+      repoId: members[0].repoId,
+      layer: LAYER.Library,
+      unit: { dir, packageName: dir, files: 0, lines: 0, ports: [], deps: [...new Set(members.flatMap((m) => m.unit!.deps))] },
+    });
+    for (const m of members) foldInto.set(m.id, id);
+  }
+  const ownerOf = (id: string): string => (foldInto.has(id) ? ownerOf(foldInto.get(id)!) : id);
+  const packageOwner = new Map<string, string>();
+  for (const [member] of foldInto) {
+    const m = nodes.get(member)!;
+    const owner = nodes.get(ownerOf(member))!;
+    owner.parts = [...(owner.parts ?? []), m.name];
+    owner.unit!.files += m.unit!.files;
+    owner.unit!.lines += m.unit!.lines;
+    packageOwner.set(m.unit!.packageName, owner.id);
+    nodes.delete(member);
+  }
+  for (const [f, u] of fileUnit) if (foldInto.has(u)) fileUnit.set(f, ownerOf(u));
+  for (const n of nodes.values()) if (n.parts && !n.id.startsWith("group:")) n.detail = `${n.detail} · +${n.parts.length} packages`;
+  // Two packages both called "ui": tell them apart by folder.
+  const named = new Map<string, ArchNode[]>();
+  for (const n of nodes.values()) if (n.unit) named.set(n.name, [...(named.get(n.name) ?? []), n]);
+  for (const same of named.values()) if (same.length > 1) for (const n of same) n.name = n.unit!.dir.split("/").pop() || n.name;
+
   // Datastores: one per repo that has tables, named after the engine or its compose service.
   const repoRoot = new Map(graph.nodes.filter((n) => n.kind === "folder" && n.parentId === null).map((n) => [n.repoId!, n]));
   const tablesByRepo = new Map<string, GraphNode[]>();
@@ -234,9 +301,22 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
   }
 
   // Compose services: either one of our units (by build context or name), or infrastructure.
+  const repoSlug = new Map(repos.map((r) => [r.id, r.name.toLowerCase().replace(/[^a-z0-9]/g, "")]));
   for (const i of infraNodes) {
     const key = `${i.repoId}:${i.name}`;
     if (composeAlias.has(key)) continue;
+    // Compose files for tests and examples describe throwaway setups, not the system.
+    if (/(^|\/)(tests?|e2e|__tests__|examples?|fixtures?)\//.test(i.path ?? "")) continue;
+    const image: string = i.meta?.image ?? "";
+    // Every database service of a repo with a schema is that schema's database (dev, test, healthcheck copies).
+    const dbKind = IMAGE_KINDS.find(([re]) => re.test(image));
+    if (dbKind?.[1] === "Database" && datastoreOf.has(i.repoId!)) {
+      composeAlias.set(key, datastoreOf.get(i.repoId!)!);
+      continue;
+    }
+    // The project's own image (`…/calcom/cal.diy`) is the app itself, deployed.
+    const slug = repoSlug.get(i.repoId!) ?? "";
+    if (slug.length >= 4 && image.toLowerCase().replace(/[^a-z0-9/]/g, "").includes(slug)) continue;
     const units = unitsByRepo.get(i.repoId!) ?? [];
     const build: string | null = i.meta?.build ?? null;
     const unit = units.find((u) => build !== null && build !== "" && u.path === build) ?? units.find((u) => shortName(u.name) === i.name || (u.path ?? "").split("/").pop() === i.name);
@@ -278,13 +358,17 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
   // Missing: packages that another repo in the workspace provides, or that nothing declares.
   const inProject = new Set(repos.map((r) => r.id));
   const providers = new Map(workspace.filter((w) => !inProject.has(w.repoId)).map((w) => [w.packageName, w]));
+  // Undeclared packages only count as missing when they look like ours (`@calcom/…` in a `@calcom` project);
+  // an undeclared `express` is a hoisted npm dependency, not a missing part of the system.
+  const scopeOf = (pkg: string) => (pkg.startsWith("@") ? pkg.split("/")[0] : null);
+  const ownScopes = new Set(unitNodes.map((u) => scopeOf(u.name)).filter(Boolean));
   const undeclared = new Map<string, number>();
-  for (const p of graph.packages) if (!p.declared) undeclared.set(p.name, (undeclared.get(p.name) ?? 0) + p.uses);
+  for (const p of graph.packages) if (!p.declared && ownScopes.has(scopeOf(p.name))) undeclared.set(p.name, (undeclared.get(p.name) ?? 0) + p.uses);
 
   const tableRepo = new Map(graph.nodes.filter((n) => n.kind === "table").map((t) => [t.id, t.repoId!]));
 
   // Packages that another repo of this project provides: a real cross-repo dependency.
-  const unitByPackage = new Map<string, string>();
+  const unitByPackage = new Map<string, string>(packageOwner);
   for (const n of nodes.values()) if (n.unit) unitByPackage.set(n.unit.packageName, n.id);
 
   for (const e of graph.edges) {
@@ -404,11 +488,122 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
       link(app.id, services[0].id, "calls", `via ${e.dst.slice(4)}`, e.src, true);
   }
 
+  // Imports of shared libraries are code structure; the map draws them only on selection, so what's
+  // left is how the system runs: calls, data, queues and external services.
+  for (const e of edges.values()) if (e.kind === "imports" && nodes.get(e.target)?.kind === "Library") e.minor = true;
+
+  // Many web APIs reached only from one place (an app store's integrations) become one box.
+  const hostUsers = new Map<string, Set<string>>();
+  for (const e of edges.values()) if (e.target.startsWith("host:")) hostUsers.set(e.target, (hostUsers.get(e.target) ?? new Set()).add(e.source));
+  const exclusive = new Map<string, string[]>();
+  for (const [host, users] of hostUsers) if (users.size === 1) exclusive.set([...users][0], [...(exclusive.get([...users][0]) ?? []), host]);
+  for (const [source, hosts] of exclusive) {
+    if (hosts.length < 4) continue;
+    const names = hosts.map((h) => nodes.get(h)!.name);
+    const id = `apis:${source}`;
+    add({ id, kind: "External", name: `${hosts.length} web APIs`, detail: names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : ""), repoId: null, layer: 3, external: { via: names } });
+    for (const h of hosts) {
+      const old = edges.get(`${source}>${h}:calls`);
+      link(source, id, "calls", nodes.get(h)!.name, old?.files[0]);
+      for (const f of old?.files.slice(1) ?? []) link(source, id, "calls", nodes.get(h)!.name, f);
+      edges.delete(`${source}>${h}:calls`);
+      nodes.delete(h);
+    }
+  }
+
   // Drop tiny libraries that nothing uses and that use nothing.
   const touched = new Set([...edges.values()].flatMap((e) => [e.source, e.target]));
   for (const n of [...nodes.values()]) if (n.kind === "Library" && !touched.has(n.id) && (n.unit?.files ?? 0) < 3) nodes.delete(n.id);
 
   return { nodes: [...nodes.values()], edges: [...edges.values()].filter((e) => nodes.has(e.source) && nodes.has(e.target)), byId: nodes, fileUnit };
+}
+
+/**
+ * The C4 "container" view: only what runs or stores data (apps, services, workers, datastores,
+ * external systems). Shared libraries are code inside those containers, so they're hidden and what
+ * they do is credited to the containers that use them: web imports lib, lib calls Stripe → web uses Stripe.
+ */
+export function containerView(m: ArchModel): ArchModel {
+  const hidden = (id: string) => m.byId.get(id)?.kind === "Library";
+  const nodes = m.nodes.filter((n) => !hidden(n.id));
+  const imports = new Map<string, string[]>();
+  for (const e of m.edges) if (e.kind === "imports" && hidden(e.target)) imports.set(e.source, [...(imports.get(e.source) ?? []), e.target]);
+  const edges = new Map(m.edges.filter((e) => !hidden(e.source) && !hidden(e.target)).map((e) => [e.id, { ...e }]));
+  for (const c of nodes) {
+    // Every library this container reaches, directly or through other libraries.
+    const seen = new Set<string>();
+    const queue = [...(imports.get(c.id) ?? [])];
+    while (queue.length) {
+      const lib = queue.shift()!;
+      if (seen.has(lib)) continue;
+      seen.add(lib);
+      queue.push(...(imports.get(lib) ?? []));
+    }
+    for (const lib of seen) {
+      const name = m.byId.get(lib)!.name;
+      for (const e of m.edges) {
+        if (e.source !== lib || e.kind === "imports" || hidden(e.target) || e.target === c.id) continue;
+        const id = `${c.id}>${e.target}:${e.kind}`;
+        const have = edges.get(id);
+        if (have) {
+          if (have.via && !have.via.includes(name)) have.via.push(name);
+          continue;
+        }
+        edges.set(id, { ...e, id, source: c.id, files: [...e.files], reasons: [...e.reasons], via: [name] });
+      }
+    }
+  }
+  // Plain web hosts (api.close.com, a "12 web APIs" group) become one box; named services stay.
+  let shown = nodes;
+  const hosts = nodes.filter((n) => n.kind === "External" && (n.id.startsWith("host:") || n.id.startsWith("apis:")));
+  if (hosts.length > 1) {
+    const names = hosts.flatMap((h) => h.external?.via.length ? h.external.via : [h.name]);
+    const apis: ArchNode = { id: "apis:web", kind: "External", name: `${names.length} web APIs`, detail: names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : ""), repoId: null, layer: 3, external: { via: names } };
+    const ids = new Set(hosts.map((h) => h.id));
+    shown = [...nodes.filter((n) => !ids.has(n.id)), apis];
+    for (const e of edges.values()) if (ids.has(e.target)) e.target = apis.id;
+  }
+  // One line per pair: the strongest kind wins (calls > data > uses > depends > imports), evidence merged.
+  const rank: Record<ArchEdgeKind, number> = { calls: 0, data: 1, uses: 2, depends: 3, imports: 4 };
+  const pairs = new Map<string, ArchEdge>();
+  for (const e of edges.values()) {
+    const key = `${e.source}>${e.target}`;
+    const have = pairs.get(key);
+    if (!have) {
+      pairs.set(key, { ...e, id: `${key}:${e.kind}` });
+      continue;
+    }
+    const [strong, weak] = rank[e.kind] < rank[have.kind] ? [e, have] : [have, e];
+    pairs.set(key, {
+      ...strong,
+      id: `${key}:${strong.kind}`,
+      reasons: [...new Set([...strong.reasons, ...weak.reasons])],
+      files: [...new Set([...strong.files, ...weak.files])],
+      weight: strong.weight + weak.weight,
+      // Direct beats "via a library": only keep `via` when every part went through one.
+      via: strong.via && weak.via ? [...new Set([...strong.via, ...weak.via])] : undefined,
+      minor: strong.minor && weak.minor,
+    });
+  }
+  return { nodes: shown, edges: [...pairs.values()], byId: new Map(shown.map((n) => [n.id, n])), fileUnit: m.fileUnit };
+}
+
+/** A few words for a line, always visible: how the two talk (protocol, data, SDK). */
+export function edgeLabel(e: ArchEdge, model: ArchModel): string {
+  const target = model.byId.get(e.target);
+  const r = e.reasons;
+  let base: string;
+  if (e.kind === "data") {
+    const n = r.map((x) => Number(x.match(/(\d+) tables/)?.[1] ?? 0)).reduce((a, b) => Math.max(a, b), 0);
+    base = `${target?.datastore?.engine === "MongoDB" ? "queries" : "SQL"}${n ? ` · ${n} tables` : ""}`;
+  } else if (e.kind === "calls") {
+    const port = r.map((x) => x.match(/localhost:(\d+)/)?.[1]).find(Boolean);
+    base = port ? `HTTP :${port}` : target?.kind === "External" ? "HTTPS" : r.some((x) => /trpc/i.test(x)) ? "tRPC" : "HTTP";
+  } else if (e.kind === "uses") {
+    base = target?.kind === "Cache" || target?.kind === "Queue" ? (target.name.toLowerCase().includes("redis") || r.some((x) => /redis|bull/.test(x)) ? "Redis" : "queue") : target?.kind === "Mail" ? "SMTP" : target?.kind === "External" || target?.kind === "AI" ? "SDK" : "uses";
+  } else if (e.kind === "depends") base = "depends on";
+  else base = "imports";
+  return e.via?.length ? `${base} · via ${e.via[0]}${e.via.length > 1 ? ` +${e.via.length - 1}` : ""}` : base;
 }
 
 export const KIND_COLOR: Record<ArchKind, string> = {

@@ -1281,3 +1281,12 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .add-repo-or::before, .add-repo-or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .add-repo-input { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 12.5px; outline: none; }
 .add-repo-input:focus { border-color: rgba(139, 92, 246, 0.6); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12); }
+
+/* Architecture: system boundary, view toggle, always-on line labels */
+.arch-boundary { width: 100%; height: 100%; box-sizing: border-box; border: 1.5px dashed var(--edge-strong); border-radius: 18px; padding: 8px 14px; display: flex; gap: 8px; align-items: baseline; font-size: 13px; font-weight: 600; color: var(--text-2); pointer-events: none; }
+.arch-view-toggle { position: absolute; top: 12px; right: 12px; z-index: 6; display: flex; gap: 2px; padding: 3px; border-radius: 10px; }
+.arch-view-toggle button { height: 26px; padding: 0 10px; border: none; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 12.5px; cursor: pointer; }
+.arch-view-toggle button.on { background: var(--seg-active); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.arch-edge-label.quiet { opacity: 0.75; font-size: 10.5px; }
+.map[data-level="file"] .arch-edge.dim + .arch-edge-label { opacity: 0.3; }
+.lg-boundary { display: inline-block; width: 14px; height: 9px; border: 1.5px dashed var(--edge-strong); border-radius: 3px; margin-right: 4px; vertical-align: -1px; }

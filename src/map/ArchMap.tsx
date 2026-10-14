@@ -3,13 +3,14 @@ import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import { Background, BackgroundVariant, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import type { Graph, Project } from "../api";
-import { KIND_COLOR, buildArchModel, type ArchModel, type ArchNode, type WorkspacePackage } from "./archModel";
+import { KIND_COLOR, buildArchModel, containerView, edgeLabel, type ArchModel, type ArchNode, type WorkspacePackage } from "./archModel";
 import type { Highlight } from "./nodes";
 import { ArchInspector } from "./ArchInspector";
 import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
 import type { Focus } from "./focus";
 import type { Plan } from "../sections/plan";
+import { ARCH_ROLE, ROLES } from "../arch/roles";
 import { fontsReady, lineCount, MONO, SANS, textWidth } from "./measure";
 
 const NODE_W = 248;
@@ -74,7 +75,15 @@ const SectionFrame = memo(({ data }: NodeProps<Node<{ name: string; description:
   </div>
 ));
 
-const nodeTypes = { arch: ArchCard, section: SectionFrame };
+/** The system boundary: a dashed frame around everything the project runs or stores. */
+const Boundary = memo(({ data }: NodeProps<Node<{ name: string }>>) => (
+  <div className="arch-boundary">
+    <span>{data.name}</span>
+    <span className="faint">system</span>
+  </div>
+));
+
+const nodeTypes = { arch: ArchCard, section: SectionFrame, boundary: Boundary };
 
 const flowInside = {
   "elk.algorithm": "layered",
@@ -94,14 +103,16 @@ async function layoutSections(model: ArchModel, plan: Plan, sizes: Map<string, S
         id: "frame",
         layoutOptions: flowInside,
         children: model.nodes.filter((n) => members.has(n.id)).map((n) => ({ id: n.id, width: NODE_W, height: sizes.get(n.id)!.height, layoutOptions: { "elk.partitioning.partition": String(n.layer) } })),
-        edges: model.edges.filter((e) => members.has(e.source) && members.has(e.target)).map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+        edges: model.edges.filter((e) => !e.minor && members.has(e.source) && members.has(e.target)).map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
       };
       return elk.layout(frame);
     }),
   );
   const GAP_X = 80, GAP_Y = 40;
-  const tiers = [...new Set(plan.sections.map((s) => s.tier))].sort((a, b) => a - b);
-  const columns = tiers.map((t) => plan.sections.flatMap((s, i) => (s.tier === t ? [i] : [])));
+  // Sections whose parts are all hidden (shared code in the container view) take no room.
+  const shown = plan.sections.map((s) => s.members.some((m) => model.byId.has(m)));
+  const tiers = [...new Set(plan.sections.filter((_, i) => shown[i]).map((s) => s.tier))].sort((a, b) => a - b);
+  const columns = tiers.map((t) => plan.sections.flatMap((s, i) => (s.tier === t && shown[i] ? [i] : [])));
   const heightOf = (col: number[]) => col.reduce((h, i) => h + (frames[i].height ?? 0), 0) + GAP_Y * (col.length - 1);
   const tallest = Math.max(...columns.map(heightOf));
   const boxes: Layout["boxes"] = new Map();
@@ -121,7 +132,7 @@ async function layoutSections(model: ArchModel, plan: Plan, sizes: Map<string, S
   return { boxes };
 }
 
-/** Columns: clients → services → libraries → data & external. */
+/** Columns by architectural role: clients → APIs → workers → shared code → data → external services. */
 async function layoutArch(model: ArchModel, sizes: Map<string, Size>): Promise<Layout> {
   const graph: ElkNode = {
     id: "root",
@@ -135,8 +146,8 @@ async function layoutArch(model: ArchModel, sizes: Map<string, Size>): Promise<L
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.separateConnectedComponents": "false",
     },
-    children: model.nodes.map((n) => ({ id: n.id, width: NODE_W, height: sizes.get(n.id)!.height, layoutOptions: { "elk.partitioning.partition": String(n.layer) } })),
-    edges: model.edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+    children: model.nodes.map((n) => ({ id: n.id, width: NODE_W, height: sizes.get(n.id)!.height, layoutOptions: { "elk.partitioning.partition": String(ARCH_ROLE[n.kind]) } })),
+    edges: model.edges.filter((e) => !e.minor).map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
   };
   const result = await elk.layout(graph);
   return { boxes: new Map((result.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? 0, height: c.height ?? 0 }])) };
@@ -155,11 +166,47 @@ type Props = {
   plan?: Plan | null;
 };
 
-function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan = null }: Props) {
+function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan: aiPlan = null }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
-  const model = useMemo(() => buildArchModel(graph, project.repos, workspace), [graph, project.repos, workspace]);
+  const full = useMemo(() => buildArchModel(graph, project.repos, workspace), [graph, project.repos, workspace]);
+  // Containers by default (what runs and stores data); shared libraries are code inside them.
+  const codeKey = `strata-arch-code-${project.id}`;
+  const [showCode, setShowCode] = useState(() => {
+    try {
+      return localStorage.getItem(codeKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleCode = (on: boolean) => {
+    setShowCode(on);
+    try {
+      localStorage.setItem(codeKey, on ? "1" : "0");
+    } catch {}
+  };
+  const model = useMemo(() => (showCode ? full : containerView(full)), [full, showCode]);
+  // Boxes the AI plan doesn't know (the container view's merged "web APIs") join a section of their role.
+  const plan = useMemo<Plan | null>(() => {
+    if (!aiPlan) return null;
+    const sections = aiPlan.sections.map((s) => ({ ...s, members: [...s.members] }));
+    const sectionOf = new Map(aiPlan.sectionOf);
+    for (const n of model.nodes) {
+      if (sectionOf.has(n.id)) continue;
+      const role = ARCH_ROLE[n.kind];
+      let i = sections.findIndex((s) => s.tier === role);
+      if (i < 0) i = sections.push({ name: ROLES[role], description: "", tier: role, members: [] }) - 1;
+      sections[i].members.push(n.id);
+      sectionOf.set(n.id, i);
+    }
+    return { sections, sectionOf };
+  }, [aiPlan, model]);
+  // A jump to a library (from Docs or Ask Strata) needs the shared code visible.
+  useEffect(() => {
+    if (focusReq && !showCode && full.byId.get(focusReq.id)?.kind === "Library") setShowCode(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq]);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [sizes, setSizes] = useState<Map<string, Size>>(new Map());
   const [sel, setSel] = useState<string | null>(focus);
@@ -213,9 +260,28 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     const repoName = (id: string | null) => (id ? project.repos.find((r) => r.id === id)?.name ?? null : null);
     const frames: Node[] = (plan?.sections ?? []).flatMap((sec, i) => {
       const b = layout.boxes.get(`sec:${i}`);
+      if (b && !sec.members.some((m) => model.byId.has(m))) return [];
       return b ? [{ id: `sec:${i}`, type: "section", position: { x: b.x, y: b.y }, width: b.width, height: b.height, data: { name: sec.name, description: sec.description, count: sec.members.length }, draggable: false, selectable: false, zIndex: 0 }] : [];
     });
+    // The system boundary: everything we run or store, with external services outside it.
+    const inside = (n: ArchNode) => ARCH_ROLE[n.kind] < 5 && n.kind !== "Missing";
+    const ownBoxes = plan
+      ? (plan.sections ?? []).flatMap((sec, i) => (sec.tier < 5 && sec.members.some((m) => model.byId.has(m)) && layout.boxes.get(`sec:${i}`) ? [layout.boxes.get(`sec:${i}`)!] : []))
+      : model.nodes.filter(inside).flatMap((n) => (layout.boxes.get(n.id) ? [layout.boxes.get(n.id)!] : []));
+    const PAD = 28;
+    const boundary: Node[] = ownBoxes.length
+      ? [
+          (() => {
+            const x0 = Math.min(...ownBoxes.map((b) => b.x)) - PAD;
+            const y0 = Math.min(...ownBoxes.map((b) => b.y)) - PAD - 26;
+            const x1 = Math.max(...ownBoxes.map((b) => b.x + b.width)) + PAD;
+            const y1 = Math.max(...ownBoxes.map((b) => b.y + b.height)) + PAD;
+            return { id: "boundary", type: "boundary", position: { x: x0, y: y0 }, width: x1 - x0, height: y1 - y0, data: { name: project.name }, draggable: false, selectable: false, zIndex: -1 };
+          })(),
+        ]
+      : [];
     const nodes: Node[] = [
+      ...boundary,
       ...frames,
       ...model.nodes.flatMap((n) => {
         const b = layout.boxes.get(n.id);
@@ -226,17 +292,19 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
           : [];
       }),
     ];
-    const edges: Edge[] = model.edges.map((e) => {
+    // Library-to-library imports only show for the selected library.
+    const edges: Edge[] = model.edges.filter((e) => !e.minor || e.source === sel || e.target === sel).map((e) => {
       const active = !!sel && (e.source === sel || e.target === sel);
       return {
         id: e.id,
         source: e.source,
         target: e.target,
         className: `arch-edge k-${e.kind} ${e.inferred ? "inferred" : ""} ${e.target.startsWith("missing:") ? "missing" : ""} ${active ? "active" : sel ? "dim" : ""}`,
-        label: active ? e.reasons.join(" · ") : undefined,
+        // A short label on every line (how they talk); the full evidence when it's selected.
+        label: active ? [...e.reasons, ...(e.via?.length ? [`via ${e.via.join(", ")}`] : [])].join(" · ") : edgeLabel(e, model),
         labelBgPadding: [6, 3] as [number, number],
         labelBgBorderRadius: 6,
-        labelClassName: "arch-edge-label",
+        labelClassName: `arch-edge-label ${active ? "" : "quiet"}`,
         animated: active && e.kind === "calls",
         zIndex: active ? 3 : 1,
       };
@@ -270,6 +338,14 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <ZoomWatcher container={container} onLevel={() => {}} />
       </ReactFlow>
       {!layout && <div className="map-loading">Laying out the architecture…</div>}
+      <div className="arch-view-toggle glass">
+        <button className={showCode ? "" : "on"} onClick={() => toggleCode(false)} title="What runs and stores data: apps, services, workers, datastores and external systems">
+          Containers
+        </button>
+        <button className={showCode ? "on" : ""} onClick={() => toggleCode(true)} title="Also show the shared libraries inside them">
+          + Shared code
+        </button>
+      </div>
       <div className="map-legend">
         <span>
           {Object.entries(counts)
@@ -280,9 +356,10 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <span><i className="lg-line" style={{ borderColor: "var(--db)" }} /> data</span>
         <span><i className="lg-line" /> imports / uses</span>
         <span><i className="lg-line ghost" /> missing · inferred</span>
+        <span><i className="lg-boundary" /> {project.name}</span>
       </div>
-      {sel && model.byId.has(sel) && (
-        <ArchInspector model={model} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />
+      {sel && full.byId.has(sel) && (
+        <ArchInspector model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />
       )}
     </div>
   );
