@@ -42,6 +42,8 @@ export type RepoBox = {
   clusters: Cluster[];
   items: MapItem[];
   fileCount: number;
+  /** AI sections only: the column, left to right (0 = user-facing … 3 = data & infrastructure). */
+  tier?: number;
 };
 
 /** A package that code imports but no package.json declares — usually a repo that isn't connected yet. */

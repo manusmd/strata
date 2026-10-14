@@ -106,6 +106,9 @@ export async function layoutCodeModel(model: CodeModel, expanded: Set<string>): 
 
   // Only edges whose ends are on the map (ELK rejects the whole graph otherwise).
   const present = new Set([...model.repos.map((r) => r.id), ...model.ghosts.map((g) => g.id)]);
+  // AI sections carry a tier: one column per tier, user-facing on the left; missing packages after the last.
+  const tiered = model.repos.some((r) => r.tier !== undefined);
+  const partition = (p: number): Record<string, string> => (tiered ? { "elk.partitioning.partition": String(p) } : {});
   const graph: ElkNode = {
     id: "root",
     layoutOptions: {
@@ -114,18 +117,19 @@ export async function layoutCodeModel(model: CodeModel, expanded: Set<string>): 
       "elk.layered.spacing.nodeNodeBetweenLayers": "96",
       "elk.spacing.nodeNode": "40",
       "elk.spacing.componentComponent": "60",
+      ...(tiered ? { "elk.partitioning.activate": "true", "elk.separateConnectedComponents": "false" } : {}),
     },
     children: [
       ...model.repos.map((r) => {
         const useFlow = r.items.length <= FLOW_LIMIT;
         return {
           id: r.id,
-          layoutOptions: containerOptions(r.items.length, REPO_HEADER),
+          layoutOptions: { ...containerOptions(r.items.length, REPO_HEADER), ...partition(r.tier ?? 0) },
           children: r.items.map(toElk),
           edges: useFlow ? localEdges(r.id) : [],
         };
       }),
-      ...model.ghosts.map((g) => ({ id: g.id, width: GHOST_W, height: GHOST_H })),
+      ...model.ghosts.map((g) => ({ id: g.id, width: GHOST_W, height: GHOST_H, layoutOptions: partition(4) })),
     ],
     edges: topEdges.filter((e) => present.has(e.sources[0]) && present.has(e.targets[0])),
   };

@@ -16,7 +16,11 @@ export function useSectionPlan(project: Project, lens: SectionLens | null, graph
     if (!enabled || !lens || !graph) return null;
     const models = lens === "arch" ? { arch: buildArchModel(graph, project.repos, workspace) } : lens === "db" ? { db: buildDbModel(graph, project.repos) } : { code: buildCodeModel(graph, project.repos) };
     const input = planInput(lens, project, graph, models, summaryStore.texts(project.id));
-    return input.items.length > 1 ? buildPlanRequest(lens, project, input) : null;
+    if (input.items.length < 2) return null;
+    // Architecture components know their column; a section sits where its most user-facing member does.
+    const arch = models.arch;
+    const tierOf = arch ? (members: string[]) => Math.min(...members.map((id) => arch.byId.get(id)?.layer ?? 3)) : undefined;
+    return { ...buildPlanRequest(lens, project, input), tierOf };
     // Summaries only refine the plan; don't re-plan whenever one arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, lens, graph, project.repos, project.name, workspace]);
@@ -32,7 +36,7 @@ export function useSectionPlan(project: Project, lens: SectionLens | null, graph
   const plan = useMemo<Plan | null>(() => {
     if (!request || !entry?.summary || entry.summary.hash !== request.hash) return null;
     try {
-      return parsePlan(entry.summary.text, request.tokens);
+      return parsePlan(entry.summary.text, request.tokens, request.tierOf);
     } catch {
       return null;
     }

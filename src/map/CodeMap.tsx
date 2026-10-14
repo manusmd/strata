@@ -44,6 +44,7 @@ function sectioned(m: CodeModel, plan: Plan, project: Project): CodeModel {
       return {
         id: `sec:${i}`,
         name: sec.name,
+        tier: sec.tier,
         clusters,
         items: clusters.map((c) => ({ kind: "cluster" as const, cluster: c, label: `${multi ? `${repoName(c.repoId)}/` : ""}${c.dir || "."}` })),
         fileCount: clusters.reduce((n, c) => n + c.files.length, 0),

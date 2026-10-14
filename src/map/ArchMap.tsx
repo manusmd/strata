@@ -85,26 +85,38 @@ const flowInside = {
   "elk.padding": "[top=56,left=20,bottom=20,right=20]",
 };
 
-/** With AI sections: each section is a frame with its own left-to-right flow; frames are packed. */
+/** With AI sections: each section is a frame with its own left-to-right flow; frames stand in columns by tier (clients on the left, data and external services on the right) and stack in the plan's order. */
 async function layoutSections(model: ArchModel, plan: Plan, sizes: Map<string, Size>): Promise<Layout> {
-  const graph: ElkNode = {
-    id: "root",
-    layoutOptions: { "elk.algorithm": "rectpacking", "elk.aspectRatio": "1.6", "elk.spacing.nodeNode": "40" },
-    children: plan.sections.map((sec, i) => {
+  const frames = await Promise.all(
+    plan.sections.map((sec) => {
       const members = new Set(sec.members);
-      return {
-        id: `sec:${i}`,
+      const frame: ElkNode = {
+        id: "frame",
         layoutOptions: flowInside,
         children: model.nodes.filter((n) => members.has(n.id)).map((n) => ({ id: n.id, width: NODE_W, height: sizes.get(n.id)!.height, layoutOptions: { "elk.partitioning.partition": String(n.layer) } })),
         edges: model.edges.filter((e) => members.has(e.source) && members.has(e.target)).map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
       };
+      return elk.layout(frame);
     }),
-  };
-  const result = await elk.layout(graph);
+  );
+  const GAP_X = 80, GAP_Y = 40;
+  const tiers = [...new Set(plan.sections.map((s) => s.tier))].sort((a, b) => a - b);
+  const columns = tiers.map((t) => plan.sections.flatMap((s, i) => (s.tier === t ? [i] : [])));
+  const heightOf = (col: number[]) => col.reduce((h, i) => h + (frames[i].height ?? 0), 0) + GAP_Y * (col.length - 1);
+  const tallest = Math.max(...columns.map(heightOf));
   const boxes: Layout["boxes"] = new Map();
-  for (const sec of result.children ?? []) {
-    boxes.set(sec.id, { x: sec.x ?? 0, y: sec.y ?? 0, width: sec.width ?? 0, height: sec.height ?? 0 });
-    for (const c of sec.children ?? []) boxes.set(c.id, { x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? 0, height: c.height ?? 0 });
+  let x = 0;
+  for (const col of columns) {
+    // Center each column vertically so the flow reads as one row.
+    let y = (tallest - heightOf(col)) / 2;
+    const width = Math.max(...col.map((i) => frames[i].width ?? 0));
+    for (const i of col) {
+      const f = frames[i];
+      boxes.set(`sec:${i}`, { x, y, width: f.width ?? 0, height: f.height ?? 0 });
+      for (const c of f.children ?? []) boxes.set(c.id, { x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? 0, height: c.height ?? 0 });
+      y += (f.height ?? 0) + GAP_Y;
+    }
+    x += width + GAP_X;
   }
   return { boxes };
 }
