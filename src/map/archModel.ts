@@ -13,7 +13,7 @@ export type ArchNode = {
   repoId: string | null;
   /** Column in the left-to-right layout: clients → services → libraries → data & external. */
   layer: 0 | 1 | 2 | 3;
-  unit?: { dir: string; packageName: string; files: number; lines: number; ports: number[]; deps: string[]; description?: string };
+  unit?: { dir: string; packageName: string; files: number; lines: number; ports: number[]; deps: string[]; description?: string; routes?: { pages: number; api: number } };
   infra?: { image: string | null; ports: number[]; file: string; dependsOn: string[] };
   datastore?: { engine: string; tables: string[] };
   external?: { via: string[] };
@@ -229,6 +229,20 @@ export function buildArchModel(graph: Graph, repos: Repo[], workspace: Workspace
     });
   }
   for (const [f, u] of fileUnit) if (!shownUnits.has(u)) fileUnit.delete(f);
+
+  // Routes by file convention (Next.js app/ and pages/, Remix routes/): what an app offers, without AI.
+  const PAGE = /(^|\/)(app\/.*\/page|pages\/(?!api\/)[^_][^/]*|routes\/[^/]+)\.(t|j)sx?$/;
+  const API = /(^|\/)(app\/.*\/route|pages\/api\/.+)\.(t|j)s$/;
+  const pathOf = new Map(graph.nodes.filter((x) => x.kind === "file").map((x) => [x.id, x.path ?? ""]));
+  for (const [f, u] of fileUnit) {
+    const n = nodes.get(u);
+    const path = pathOf.get(f) ?? "";
+    if (!n?.unit) continue;
+    const rel = n.unit.dir ? path.slice(n.unit.dir.length + 1) : path;
+    const r = (n.unit.routes ??= { pages: 0, api: 0 });
+    if (API.test(rel)) r.api++;
+    else if (PAGE.test(rel)) r.pages++;
+  }
 
   // Packages inside another package's folder (an app store's integrations) are part of it.
   const foldInto = new Map<string, string>();

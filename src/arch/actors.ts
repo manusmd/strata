@@ -69,3 +69,44 @@ export function parseActors(json: string, ids: { id: string; name: string }[]): 
   }
   return out;
 }
+
+/** A flow suggested by Claude: parts in order, one sentence per step. */
+export type AiFlow = { id: string; title: string; steps: string[]; texts: string[] };
+
+/** What Claude gets to suggest flows: the parts, what they do, and the connections found in the code. */
+export function flowsPrompt(projectName: string, m: ArchModel, summaries: Map<string, string>) {
+  const parts = m.nodes.filter((n) => n.kind !== "Missing");
+  const name = (id: string) => m.byId.get(id)?.name ?? id;
+  const lines = parts.map((n) => {
+    const routes = n.unit?.routes && n.unit.routes.pages + n.unit.routes.api ? ` (${n.unit.routes.pages} pages, ${n.unit.routes.api} API routes)` : "";
+    return `- ${n.name} [${n.kind}] ${n.detail}${routes}${n.unit?.description ? ` — ${n.unit.description}` : ""}${summaries.get(n.id) ? ` — ${summaries.get(n.id)}` : ""}`;
+  });
+  const links = m.edges.filter((e) => !e.minor).map((e) => `- ${name(e.source)} → ${name(e.target)} (${e.kind}: ${e.reasons.slice(0, 2).join("; ")})`);
+  return {
+    hash: hashOf("flows", ...parts.map((n) => `${n.id}|${n.detail}|${n.unit?.description ?? ""}`), ...m.edges.map((e) => e.id)),
+    prompt: [
+      `Project "${projectName}". Its parts:`,
+      ...lines,
+      "Connections found in the code:",
+      ...(links.length ? links : ["- none"]),
+      "",
+      'Suggest the 1–4 most important flows a new developer should know, named by what the user does. Reply with only JSON: {"flows": [{"name": "Book a meeting", "steps": [{"part": "exact part name", "text": "what happens there, one short sentence"}]}]} with 3–6 steps each, in order, starting where the user is.',
+    ].join("\n"),
+  };
+}
+
+export function parseFlows(json: string, m: ArchModel): AiFlow[] {
+  const byName = new Map(m.nodes.map((n) => [n.name.toLowerCase(), n.id]));
+  const raw = JSON.parse(json);
+  const out: AiFlow[] = [];
+  for (const f of Array.isArray(raw?.flows) ? raw.flows.slice(0, 4) : []) {
+    const steps: { id: string; text: string }[] = [];
+    for (const s of Array.isArray(f?.steps) ? f.steps : []) {
+      const id = byName.get(String(s?.part ?? "").toLowerCase());
+      // Unknown parts are dropped; a part right after itself too.
+      if (id && steps[steps.length - 1]?.id !== id) steps.push({ id, text: String(s?.text ?? "").slice(0, 200) });
+    }
+    if (steps.length >= 2 && f?.name) out.push({ id: `aiflow:${String(f.name).toLowerCase().replace(/\W+/g, "-")}`, title: String(f.name).slice(0, 40), steps: steps.map((s) => s.id), texts: steps.map((s) => s.text) });
+  }
+  return out;
+}

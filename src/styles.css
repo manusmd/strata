@@ -363,7 +363,12 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .map-label-meta { font-size: 12px; color: var(--text-3); }
 .map[data-level="system"] .react-flow__node.map-label-node, .map[data-level="module"] .react-flow__node.map-label-node { display: block; }
 /* Repo and the two folder levels below it keep a constant on-screen size. */
-.map-label-node .map-label { transform: scale(var(--s20)); }
+.map-label-room { width: calc(var(--gw, 9999px) / var(--s20)); container-type: inline-size; transform: scale(var(--s20)); transform-origin: 0 0; }
+.map-label-node .map-label { max-width: 100%; box-sizing: border-box; overflow: hidden; }
+@container (max-width: 110px) { .map-label { display: none !important; } }
+/* Long paths are cut at the start, so the folder's own name stays readable. */
+.map-label-node .map-label-text { overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; min-width: 0; }
+.map-label-node .map-label-meta { flex: none; }
 /* While overlay labels show, the in-node headers they replace are hidden. */
 .map[data-level="system"] .map-repo-header, .map[data-level="module"] .map-repo-header,
 .map[data-level="system"] .map-folder-header,
@@ -1300,7 +1305,8 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .lg-boundary { display: inline-block; width: 14px; height: 9px; border: 1.5px dashed var(--edge-strong); border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
 
 /* Architecture drill-down: breadcrumb back to the containers */
-.arch-drill-bar { position: absolute; top: 12px; left: 12px; z-index: 7; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+.arch-drill-bar { position: absolute; top: 12px; left: 12px; z-index: 7; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-radius: 10px; font-size: 13px; max-width: calc(100% - 300px); }
+.arch-drill-libs { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; }
 .arch-drill-bar .link-btn { font-size: 13px; }
 
 /* File panel: a file wherever it was clicked */
@@ -1383,3 +1389,16 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .arch-flow-bar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 8; width: min(640px, calc(100% - 340px)); border-radius: 14px; padding: 10px 12px; animation: strataPop 0.2s ease-out; }
 .arch-flow-num { width: 26px; height: 26px; border-radius: 50%; background: #8b5cf6; color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 600; flex: none; }
 .arch-edge.flow .react-flow__edge-path { stroke: #8b5cf6; stroke-width: 2.4; }
+.arch-filter { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 10px; border-radius: 9px; width: 230px; box-sizing: border-box; }
+.arch-filter input { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; outline: none; }
+.arch-flows { flex-direction: column; align-items: flex-end; }
+.react-flow__edge.arch-edge.dim .react-flow__edge-textwrapper { opacity: 0.18; }
+
+/* Diagram title: what this shows, and how current it is */
+.arch-title { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5; text-align: center; pointer-events: none; max-width: 40%; }
+.arch-title-main { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arch-title-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.comp-card .arch-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.comp-card { gap: 4px; }
+.comp-out { padding: 10px 12px; justify-content: center; }
+.comp-panel { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 340px; z-index: 9; }

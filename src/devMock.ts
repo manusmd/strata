@@ -393,6 +393,17 @@ export async function installDevMock() {
         projects = projects.map((p) => (p.id === a.projectId && !p.repos.some((x) => x.id === r.id) ? { ...p, repos: [...p.repos, r] } : p));
         return r.id;
       }
+      case "suggest_flows": {
+        const parts = [...String(a.prompt).matchAll(/^- ([\w@/. -]+?) \[(\w+)\]/gm)].map((m) => ({ name: m[1], kind: m[2] }));
+        const app = parts.find((p) => p.kind === "App")?.name;
+        const api = parts.find((p) => p.kind === "Service")?.name;
+        const db = parts.find((p) => p.kind === "Database")?.name;
+        const ext = parts.find((p) => p.name === "Stripe" || p.name === "Google APIs")?.name;
+        const steps = [app && { part: app, text: "The user picks a time on the booking page." }, api && { part: api, text: "The API checks availability and creates the booking." }, db && { part: db, text: "The booking and attendee are stored." }, ext && { part: ext, text: "The calendar event or payment is created." }].filter(Boolean);
+        const text = JSON.stringify({ flows: [{ name: "Book a meeting", steps }] });
+        summaries[`${a.projectId}|context:flows`] = { projectId: a.projectId, nodeId: "context:flows", hash: a.hash, text, model: a.model, createdAt: now };
+        return new Promise((r) => setTimeout(() => r(text), 1200));
+      }
       case "identify_users": {
         const parts = [...String(a.prompt).matchAll(/^- ([\w@/.-]+) \[/gm)].map((m) => m[1]);
         const text = JSON.stringify({ users: [{ name: "Hosts", description: "Set up their availability and event types", uses: parts.filter((p) => p !== "docs").slice(0, 2) }, { name: "Attendees", description: "Book a time with a host", uses: parts.slice(0, 1) }, { name: "Integrators", description: "Build on the public platform API", uses: parts.filter((p) => /api/.test(p)) }].filter((u) => u.uses.length) });

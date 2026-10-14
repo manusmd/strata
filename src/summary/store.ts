@@ -82,6 +82,18 @@ export const summaryStore = {
       .catch((e) => set(project.id, nodeId, { ...prev, pending: false, error: String(e) }));
   },
 
+  /** Flows suggested by Claude for the architecture map; stored like a summary under `context:flows`. */
+  requestFlows(project: Project, hash: string, prompt: string): Promise<void> {
+    const nodeId = "context:flows";
+    const prev = state[project.id]?.[nodeId];
+    if (prev?.pending) return Promise.resolve();
+    set(project.id, nodeId, { ...prev, pending: true, error: undefined });
+    return api
+      .suggestFlows(project.id, hash, prompt, project.aiModel)
+      .then((text) => set(project.id, nodeId, { summary: { nodeId, hash, text, model: project.aiModel, createdAt: Date.now() / 1000 } }))
+      .catch((e) => set(project.id, nodeId, { ...prev, pending: false, error: String(e) }));
+  },
+
   /** The context view's users, named by Claude; stored like a summary under `context:users`. */
   requestUsers(project: Project, hash: string, prompt: string): Promise<void> {
     const nodeId = "context:users";

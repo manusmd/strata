@@ -127,6 +127,19 @@ pub fn users(prompt: &str, model: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+const FLOWS: &str = "You describe the most important request flows of a software system for a code map called Strata. \
+A flow is what happens, part by part, when a user does one important thing (e.g. 'Book a meeting'). \
+Use only the parts given, by their exact names. Prefer connections that were found in the code; if a step has no found connection, it may still be right (calls through config or URLs), but only include it when the descriptions make it clear. \
+Reply with only JSON, no prose and no code fences.";
+
+/// Suggests the main request flows (JSON text).
+pub fn flows(prompt: &str, model: &str) -> Result<String, String> {
+    let text = complete(FLOWS, prompt, model)?;
+    let trimmed = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    serde_json::from_str::<Value>(trimmed).map_err(|e| format!("Claude's answer wasn't valid JSON ({e})."))?;
+    Ok(trimmed.to_string())
+}
+
 const DOCS: &str = "You write one page of living documentation for a software project in Strata, a code map. \
 Strata decides the page's structure and shows the facts (connections, tables, env vars) itself; you write only the explanations around them. \
 Write for a developer who is new to the project: what this part is for, how it works, what to watch out for. Short paragraphs of 2–4 sentences, plain prose, no headings, no lists, no code blocks. \

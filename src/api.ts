@@ -77,6 +77,7 @@ export const api = {
   clearSummaries: (projectId: string) => invoke<number>("clear_summaries", { projectId }),
   summarize: (request: SummaryRequest) => invoke<string>("summarize", { request }),
   organize: (projectId: string, lens: string, hash: string, prompt: string, model: string) => invoke<string>("organize", { projectId, lens, hash, prompt, model }),
+  suggestFlows: (projectId: string, hash: string, prompt: string, model: string) => invoke<string>("suggest_flows", { projectId, hash, prompt, model }),
   identifyUsers: (projectId: string, hash: string, prompt: string, model: string) => invoke<string>("identify_users", { projectId, hash, prompt, model }),
   docPages: (projectId: string) => invoke<{ pageId: string; content: string; updatedAt: number }[]>("doc_pages", { projectId }),
   saveDocPage: (projectId: string, pageId: string, content: string) => invoke<void>("save_doc_page", { projectId, pageId, content }),

@@ -45,6 +45,51 @@ fn names(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_object).map(|o| o.keys().cloned().collect()).unwrap_or_default()
 }
 
+/// The first real sentence(s) of a README: skips headings, badges, images, HTML and code; strips Markdown.
+pub fn readme_summary(text: &str) -> Option<String> {
+    let mut para: Vec<String> = vec![];
+    let mut in_code = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code || t.starts_with('#') || t.starts_with('<') || t.starts_with("[![") || t.starts_with("![") || t.starts_with('>') || t.starts_with('|') || t.starts_with("---") || t.starts_with('-') || t.starts_with('*') {
+            if !para.is_empty() && !in_code {
+                break;
+            }
+            continue;
+        }
+        if t.is_empty() {
+            if !para.is_empty() {
+                break;
+            }
+            continue;
+        }
+        para.push(t.to_string());
+    }
+    let joined = para.join(" ");
+    // [text](url) -> text, **x** / `x` / _x_ -> x
+    let link = Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap();
+    let plain = link.replace_all(&joined, "$1").replace("**", "").replace('`', "");
+    let plain = plain.trim();
+    // Too short, or just a pointer elsewhere ("Refer to https://…").
+    if plain.len() < 12 || plain.contains("http") && plain.split_whitespace().count() < 8 {
+        return None;
+    }
+    // First sentence or two, at most 200 characters.
+    let mut out = String::new();
+    for sentence in plain.split_inclusive(". ") {
+        if out.len() + sentence.len() > 200 && !out.is_empty() {
+            break;
+        }
+        out.push_str(sentence);
+    }
+    let out: String = out.trim().chars().take(200).collect();
+    Some(out)
+}
+
 pub fn unit_from_manifest(dir: &str, manifest: &Value) -> Unit {
     let scripts: BTreeMap<String, String> = manifest
         .get("scripts")
@@ -340,5 +385,12 @@ app.listen({ port: Number(process.env.PORT ?? 3000), host: "0.0.0.0" });
         let env_schema = "export const env = z.object({ API_PORT: optional(z.coerce.number()).transform((v) => v ?? 3001), X: z.string() });";
         let tree = p.parse(env_schema, None).unwrap();
         assert_eq!(file_hints(tree.root_node(), env_schema).listen_ports, vec![3001]);
+    }
+
+    #[test]
+    fn readme_summaries_skip_badges_and_headings() {
+        let md = "# Cal.com API\n\n[![CI](x)](y) ![logo](l.png)\n\n<p align=\"center\">x</p>\n\nThe **public API** for [Cal.com](https://cal.com): bookings, event types and webhooks. Built with NestJS.\nSecond line.\n\n## Setup\n";
+        assert_eq!(readme_summary(md).as_deref(), Some("The public API for Cal.com: bookings, event types and webhooks. Built with NestJS. Second line."));
+        assert_eq!(readme_summary("# Title\n\n```sh\nnpm i\n```\n"), None);
     }
 }

@@ -1,10 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { MapLegend } from "./MapLegend";
 import { ContextView } from "../arch/ContextView";
+import { ComponentView } from "../arch/ComponentView";
 import { flowPath } from "../docs/outline";
 import { docsStore, useDocs } from "../docs/store";
 import { DeploymentView } from "../arch/DeploymentView";
-import { actorsPrompt, guessActors, parseActors } from "../arch/actors";
+import { actorsPrompt, flowsPrompt, guessActors, parseActors, parseFlows } from "../arch/actors";
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import { Background, BackgroundVariant, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
@@ -16,6 +17,7 @@ import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
 import type { Plan } from "../sections/plan";
 import { ARCH_ROLE, ROLES } from "../arch/roles";
+import { timeAgo } from "../api";
 import { summaryStore, useSummaries } from "../summary/store";
 import { CodeMap } from "./CodeMap";
 import { focusOn, type Focus } from "./focus";
@@ -29,7 +31,9 @@ type Size = { nameLines: number; detailLines: number; respLines: number; height:
 /** What a component is for, in a line: the start of its AI summary, else its package.json description. */
 function respOf(n: ArchNode, summaries: Map<string, string>): string | null {
   const s = summaries.get(n.id);
-  const first = s ? s.match(/^.+?[.!?](\s|$)/)?.[0].trim() ?? s : n.unit?.description;
+  const routes = n.unit?.routes;
+  const offers = routes && routes.pages + routes.api > 0 ? [routes.pages ? `${routes.pages} ${routes.pages === 1 ? "page" : "pages"}` : "", routes.api ? `${routes.api} API ${routes.api === 1 ? "route" : "routes"}` : ""].filter(Boolean).join(" · ") : null;
+  const first = s ? s.match(/^.+?[.!?](\s|$)/)?.[0].trim() ?? s : n.unit?.description ?? offers;
   if (!first) return null;
   return first.length > 140 ? `${first.slice(0, 137).trimEnd()}…` : first;
 }
@@ -206,6 +210,17 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
   // Containers only (what runs and stores data); a component's code is one step in: "Look inside".
   const model = useMemo(() => containerView(full), [full]);
   const [drill, setDrill] = useState<string | null>(null);
+  // Inside a container: its components (C4 level 3) or its files on the code map.
+  const [drillTab, setDrillTab] = useState<"components" | "files">("components");
+  // Opened for a file: show the files with it selected; otherwise start with the components.
+  const fromFile = useRef(false);
+  useEffect(() => {
+    setDrillTab(fromFile.current ? "files" : "components");
+    if (!fromFile.current) setFileFocus(null);
+    fromFile.current = false;
+  }, [drill]);
+  // Where "Look inside" came from when stepping into a library from a component.
+  const [drillTrail, setDrillTrail] = useState<string[]>([]);
   // A jump to something that isn't a container (a library from Docs, a file) opens its code.
   useEffect(() => {
     if (!focusReq) return;
@@ -217,6 +232,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     if (!drillFile) return;
     const unit = full.fileUnit.get(drillFile.id);
     if (unit) {
+      fromFile.current = true;
       setDrill(unit);
       setFileFocus(focusOn(drillFile.id));
     }
@@ -242,27 +258,6 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
   const summaryEntries = useSummaries(project.id);
 
   // Flows: the main request path from each app, the same ones Docs describes, played on the map.
-  const flows = useMemo(
-    () =>
-      model.nodes
-        .filter((n) => ARCH_ROLE[n.kind] === 0 && n.unit)
-        .map((n) => ({ id: `flow:${n.id}`, title: `${n.name} request path`, steps: flowPath(model, n.id) }))
-        .filter((f) => f.steps.length >= 3),
-    [model],
-  );
-  const [played, setPlayed] = useState<{ id: string; step: number; playing: boolean } | null>(null);
-  const [flowMenu, setFlowMenu] = useState(false);
-  const activeFlow = played ? flows.find((f) => f.id === played.id) : undefined;
-  const docs = useDocs(project.id);
-  useEffect(() => {
-    if (played) docsStore.load(project.id);
-  }, [played, project.id]);
-  useEffect(() => {
-    if (!played?.playing || !activeFlow) return;
-    const t = setTimeout(() => setPlayed((f) => (f && f.step < activeFlow.steps.length - 1 ? { ...f, step: f.step + 1 } : f && { ...f, playing: false })), 2600);
-    return () => clearTimeout(t);
-  }, [played, activeFlow]);
-
   // Context (the system as one box, its users and external systems) or the containers inside it.
   const viewKey = `strata-arch-view-${project.id}`;
   type View = "context" | "containers" | "deployment";
@@ -280,6 +275,64 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       localStorage.setItem(viewKey, v);
     } catch {}
   };
+  // With "Enrich with AI", Claude also suggests the flows that matter (e.g. "Book a meeting").
+  const flowsAsk = useMemo(() => flowsPrompt(project.name, model, summaryStore.texts(project.id)), [project.name, project.id, model]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flowsEntry = summaryEntries["context:flows"];
+  useEffect(() => {
+    if (!aiEnriched || view !== "containers" || flowsEntry?.pending || flowsEntry?.error) return;
+    if (flowsEntry?.summary?.hash !== flowsAsk.hash) summaryStore.requestFlows(project, flowsAsk.hash, flowsAsk.prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiEnriched, view, flowsAsk.hash, flowsEntry?.summary?.hash]);
+  const flows = useMemo(() => {
+    const found: { id: string; title: string; steps: string[]; texts?: string[]; ai?: boolean }[] = model.nodes
+      .filter((n) => ARCH_ROLE[n.kind] === 0 && n.unit)
+      .map((n) => ({ id: `flow:${n.id}`, title: `${n.name} request path`, steps: flowPath(model, n.id) }))
+      .filter((f) => f.steps.length >= 3);
+    if (aiEnriched && flowsEntry?.summary?.hash === flowsAsk.hash) {
+      try {
+        found.unshift(...parseFlows(flowsEntry.summary.text, model).map((f) => ({ ...f, ai: true })));
+      } catch {}
+    }
+    return found;
+  }, [model, aiEnriched, flowsEntry?.summary, flowsAsk.hash]);
+  // Topic filter: what matches (name, tech, description, AI summary, AI section) and its direct neighbors.
+  const [topic, setTopic] = useState("");
+  const topicHits = useMemo(() => {
+    const q = topic.trim().toLowerCase();
+    if (q.length < 2) return null;
+    const texts = summaryStore.texts(project.id);
+    const hits = new Set(
+      model.nodes
+        .filter((n) => {
+          const section = plan ? plan.sections[plan.sectionOf.get(n.id) ?? -1]?.name ?? "" : "";
+          return [n.name, n.detail, n.kind, n.unit?.description, n.unit?.dir, texts.get(n.id), section, ...(n.parts ?? []), ...(n.external?.via ?? [])].some((t) => t?.toLowerCase().includes(q));
+        })
+        .map((n) => n.id),
+    );
+    const near = new Set(hits);
+    for (const e of model.edges) if (!e.minor && (hits.has(e.source) || hits.has(e.target))) (near.add(e.source), near.add(e.target));
+    return { hits, near };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic, model, plan, summaryEntries]);
+  // Bring what the filter found into view.
+  useEffect(() => {
+    if (!topicHits?.near.size) return;
+    const t = setTimeout(() => rf.fitView({ nodes: [...topicHits.near].map((id) => ({ id })), padding: 0.25, maxZoom: 1, duration: 300 }), 250);
+    return () => clearTimeout(t);
+  }, [topicHits, rf]);
+  const [played, setPlayed] = useState<{ id: string; step: number; playing: boolean } | null>(null);
+  const [flowMenu, setFlowMenu] = useState(false);
+  const activeFlow = played ? flows.find((f) => f.id === played.id) : undefined;
+  const docs = useDocs(project.id);
+  useEffect(() => {
+    if (played) docsStore.load(project.id);
+  }, [played, project.id]);
+  useEffect(() => {
+    if (!played?.playing || !activeFlow) return;
+    const t = setTimeout(() => setPlayed((f) => (f && f.step < activeFlow.steps.length - 1 ? { ...f, step: f.step + 1 } : f && { ...f, playing: false })), 2600);
+    return () => clearTimeout(t);
+  }, [played, activeFlow]);
+
   // Users: guessed from the entry points; with "Enrich with AI", named by Claude.
   const usersAsk = useMemo(() => actorsPrompt(project.name, model, summaryStore.texts(project.id)), [project.name, project.id, model]); // eslint-disable-line react-hooks/exhaustive-deps
   const usersEntry = summaryEntries["context:users"];
@@ -356,7 +409,13 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     const onPath = activeFlow ? new Set(activeFlow.steps.slice(0, played!.step + 1)) : null;
     const current = activeFlow ? activeFlow.steps[played!.step] : null;
     const hl = (id: string): Highlight =>
-      onPath ? (id === current ? "selected" : onPath.has(id) ? "related" : "dim") : !sel ? null : id === sel ? "selected" : related.has(id) ? "related" : "dim";
+      onPath
+        ? id === current ? "selected" : onPath.has(id) ? "related" : "dim"
+        : sel
+          ? id === sel ? "selected" : related.has(id) ? "related" : "dim"
+          : topicHits
+            ? topicHits.hits.has(id) ? "selected" : topicHits.near.has(id) ? "related" : "dim"
+            : null;
     // Lines along the played part of the flow, numbered.
     const flowEdge = new Map<string, number>();
     if (activeFlow) for (let k = 0; k < played!.step; k++) flowEdge.set(`${activeFlow.steps[k]}>${activeFlow.steps[k + 1]}`, k + 1);
@@ -399,7 +458,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     const edges: Edge[] = model.edges.filter((e) => !e.minor || e.source === sel || e.target === sel).map((e) => {
       const step = flowEdge.get(`${e.source}>${e.target}`);
       const active = activeFlow ? step !== undefined : !!sel && (e.source === sel || e.target === sel);
-      const dimmed = activeFlow ? step === undefined : !!sel && !active;
+      const dimmed = activeFlow ? step === undefined : sel ? !active : topicHits ? !(topicHits.near.has(e.source) && topicHits.near.has(e.target) && (topicHits.hits.has(e.source) || topicHits.hits.has(e.target))) : false;
       return {
         id: e.id,
         source: e.source,
@@ -414,8 +473,15 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         zIndex: active ? 3 : 1,
       };
     });
+    // A suggested flow can step where the code shows no line (calls through config): draw it dashed.
+    if (activeFlow)
+      for (let k = 0; k < played!.step; k++) {
+        const [a, b] = [activeFlow.steps[k], activeFlow.steps[k + 1]];
+        if (model.edges.some((e) => e.source === a && e.target === b)) continue;
+        edges.push({ id: `flowx:${k}`, source: a, target: b, className: "arch-edge k-calls inferred active flow", label: `${k + 1} · inferred`, labelBgPadding: [6, 3], labelBgBorderRadius: 6, labelClassName: "arch-edge-label", zIndex: 4 } as Edge);
+      }
     return { nodes, edges };
-  }, [layout, sizes, model, sel, project, plan, resp, activeFlow, played]);
+  }, [layout, sizes, model, sel, project, plan, resp, activeFlow, played, topicHits]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -432,11 +498,24 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       graph: {
         nodes: graph.nodes.filter((n) => files.has(n.id) || (n.kind === "symbol" && files.has(n.parentId ?? "")) || n.kind === "table"),
         edges: graph.edges.filter((e) => files.has(e.src)),
-        packages: graph.packages.filter((p) => p.repoId === drilled.repoId),
+        // No "missing package" ghosts inside one component: hoisted npm packages would all show up.
+        packages: [],
       },
       project: { ...project, repos: project.repos.filter((r) => r.id === drilled.repoId) },
+      files: [...files],
     };
   }, [drilled, full, graph, project]);
+  // A title on the diagram itself, so a screenshot says what it shows and how current it is.
+  const scannedAt = Math.max(0, ...project.repos.map((r) => r.lastScanAt ?? 0));
+  const diagramTitle = (what: string, extra: string) => (
+    <div className="arch-title">
+      <div className="arch-title-main">{what}</div>
+      <div className="arch-title-sub">
+        {extra}
+        {scannedAt ? ` · scanned ${timeAgo(scannedAt)}` : ""}
+      </div>
+    </div>
+  );
   const viewToggle = (
     <div className="arch-view-toggle glass">
       <button className={view === "context" ? "on" : ""} onClick={() => setView("context")} title="The system as one box, with its users and the external systems it depends on">
@@ -462,6 +541,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     return (
       <div className="map">
         <ContextView projectName={project.name} model={model} actors={actors} onOpenContainers={() => setView("containers")} onSelect={setSel} />
+        {diagramTitle(`System context of ${project.name}`, `${actors.length} kinds of users · ${model.nodes.filter((n) => ARCH_ROLE[n.kind] === 5).length} external systems`)}
         {viewToggle}
         {aiEnriched && usersEntry?.pending && <div className="glass scan-pill" style={{ top: "auto", bottom: 14, left: "50%" }}><span className="ai-spark">✦</span> Naming the users…</div>}
         <MapLegend
@@ -481,24 +561,85 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
       </div>
     );
 
-  if (drilled && scoped)
+  if (drilled && scoped) {
+    // The shared libraries this component imports, most used first: each one step further in.
+    const libs = full.edges
+      .filter((e) => e.source === drilled.id && e.kind === "imports" && full.byId.get(e.target)?.kind === "Library")
+      .sort((a, b) => b.files.length - a.files.length)
+      .map((e) => ({ id: e.target, name: full.byId.get(e.target)!.name, files: e.files.length }));
+    const back = drillTrail.length ? drillTrail[drillTrail.length - 1] : null;
     return (
       <div className="map" style={{ display: "flex", flexDirection: "column" }}>
         <div className="arch-drill-bar glass">
-          <button className="link-btn" onClick={() => setDrill(null)}>
-            ← {project.name}
-          </button>
-          <span className="faint">›</span>
-          <span className="mono" style={{ fontWeight: 600 }}>{drilled.name}</span>
-          <span className="faint" style={{ fontSize: 12 }}>
-            {drilled.kind} · {drilled.unit?.files ?? 0} files{drilled.parts?.length ? ` · incl. ${drilled.parts.length} packages` : ""}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button className="link-btn" onClick={() => (setDrill(null), setDrillTrail([]))}>
+              ← {project.name}
+            </button>
+            {back && (
+              <>
+                <span className="faint">›</span>
+                <button className="link-btn mono" onClick={() => (setDrill(back), setDrillTrail((t) => t.slice(0, -1)))}>
+                  {full.byId.get(back)?.name}
+                </button>
+              </>
+            )}
+            <span className="faint">›</span>
+            <span className="mono" style={{ fontWeight: 600 }}>{drilled.name}</span>
+            <span className="faint" style={{ fontSize: 12 }}>
+              {drilled.kind} · {drilled.unit?.files ?? 0} files{drilled.parts?.length ? ` · incl. ${drilled.parts.length} packages` : ""}
+            </span>
+            <div className="seg" style={{ marginLeft: 8, height: 26 }}>
+              <button className={drillTab === "components" ? "on" : ""} onClick={() => setDrillTab("components")} title="The building blocks inside: pages, API routes, modules, UI">
+                Components
+              </button>
+              <button className={drillTab === "files" ? "on" : ""} onClick={() => setDrillTab("files")} title="Folders and files on the code map">
+                Files
+              </button>
+            </div>
+          </div>
+          {libs.length > 0 && (
+            <div className="arch-drill-libs">
+              <span className="faint">Uses</span>
+              {libs.slice(0, 10).map((l) => (
+                <button
+                  key={l.id}
+                  className="doc-chip mono"
+                  style={{ ["--c" as any]: "var(--text-3)" }}
+                  title={`${l.files} ${l.files === 1 ? "file imports" : "files import"} it · look inside`}
+                  onClick={() => {
+                    setDrillTrail((t) => [...t, drilled.id]);
+                    setDrill(l.id);
+                  }}
+                >
+                  {l.name}
+                  <span className="doc-chip-sub">{l.files}</span>
+                </button>
+              ))}
+              {libs.length > 10 && <span className="faint">+{libs.length - 10}</span>}
+            </div>
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
-          <CodeMap project={scoped.project} graph={scoped.graph} onLevel={() => {}} zoomRequest={null} focus={fileFocus} onOpenTable={(id) => onOpenTable(id)} onOpenFile={onOpenFile} />
+          {drillTab === "components" ? (
+            <ComponentView
+              key={drilled.id}
+              container={drilled}
+              full={full}
+              graph={graph}
+              files={scoped.files}
+              onOpenFile={onOpenFile}
+              onOpenPart={(id) => {
+                setDrillTrail((t) => [...t, drilled.id]);
+                setDrill(id);
+              }}
+            />
+          ) : (
+            <CodeMap key={drilled.id} project={scoped.project} graph={scoped.graph} onLevel={() => {}} zoomRequest={null} focus={fileFocus} onOpenTable={(id) => onOpenTable(id)} onOpenFile={onOpenFile} />
+          )}
         </div>
       </div>
     );
+  }
 
   return (
     <div ref={container} className="map" data-level="file">
@@ -522,12 +663,29 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <ZoomWatcher container={container} onLevel={() => {}} />
       </ReactFlow>
       {!layout && <div className="map-loading">Laying out the architecture…</div>}
+      {diagramTitle(`Containers of ${project.name}`, `${model.nodes.filter((n) => ARCH_ROLE[n.kind] < 5).length} inside · ${model.nodes.filter((n) => ARCH_ROLE[n.kind] === 5).length} external`)}
       {viewToggle}
-      {flows.length > 0 && (
-        <div className="arch-flows">
+      <div className="arch-flows">
+        <div className="arch-filter glass">
+          <span className="faint">⌕</span>
+          <input
+            value={topic}
+            placeholder="Filter, e.g. billing"
+            onChange={(e) => setTopic(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setTopic("")}
+          />
+          {topicHits && <span className="faint" style={{ fontSize: 11.5, whiteSpace: "nowrap" }}>{topicHits.hits.size} {topicHits.hits.size === 1 ? "match" : "matches"}</span>}
+          {topic && (
+            <button className="icon-btn" style={{ width: 20, height: 20 }} onClick={() => setTopic("")} title="Clear">
+              ×
+            </button>
+          )}
+        </div>
+        {(flows.length > 0 || flowsEntry?.pending) && (
           <button className={`btn small ${activeFlow ? "plan-primary" : ""}`} onClick={() => setFlowMenu((o) => !o)}>
-            ▶ Flows
+            ▶ Flows{aiEnriched && flowsEntry?.pending ? " · ✦ finding…" : ""}
           </button>
+        )}
           {flowMenu && (
             <div className="arch-flow-menu glass">
               {flows.map((f) => (
@@ -539,18 +697,20 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
                     setSel(null);
                   }}
                 >
-                  <span style={{ fontWeight: 500 }}>{f.title}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {f.ai && <span className="ai-spark">✦ </span>}
+                    {f.title}
+                  </span>
                   <span className="faint mono" style={{ fontSize: 11.5 }}>{f.steps.map((s) => model.byId.get(s)?.name).join(" → ")}</span>
                 </button>
               ))}
             </div>
           )}
-        </div>
-      )}
+      </div>
       {activeFlow && played && (() => {
         const node = model.byId.get(activeFlow.steps[played.step]);
         const page = docs.pages[activeFlow.id];
-        const text = page?.blocks.find((b) => b.key === `step:${played.step}`)?.text;
+        const text = activeFlow.texts?.[played.step] || page?.blocks.find((b) => b.key === `step:${played.step}`)?.text;
         const plainText = text?.replace(/\[\[(?:component|file|table|symbol):([^\]]+)\]\]/g, (_, v) => String(v).replace(/^.*\//, ""));
         return (
           <div className="arch-flow-bar glass">
@@ -569,7 +729,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
               <button className="btn small" onClick={() => setPlayed({ ...played, step: played.playing || played.step >= activeFlow.steps.length - 1 ? 0 : played.step, playing: !played.playing })}>
                 {played.playing ? "■ Stop" : "▶ Play"}
               </button>
-              {onOpenDocs && (
+              {onOpenDocs && !activeFlow.ai && (
                 <button className="btn small ghost" onClick={() => onOpenDocs(activeFlow.id)} title="Open this flow's Docs page">
                   Docs
                 </button>
@@ -577,6 +737,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
               <button className="icon-btn" title="Close the flow" onClick={() => setPlayed(null)}>×</button>
             </div>
             {!text && <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>Write this flow in Docs to see what happens at each step.</div>}
+            {activeFlow.ai && <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}><span className="ai-spark">✦</span> Suggested by Claude from the parts and their descriptions; dashed steps weren't found as calls in the code.</div>}
           </div>
         );
       })()}

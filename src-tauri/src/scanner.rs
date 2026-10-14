@@ -613,7 +613,17 @@ pub fn scan_repo(repo_id: &str, root: &Path, mut progress: impl FnMut(usize, usi
     tables.dedup_by(|a, b| a.name == b.name);
 
     // ---- Architecture: units, infrastructure, engines ----
-    let mut units: Vec<arch::Unit> = manifests.iter().map(|(dir, m)| arch::unit_from_manifest(&rel_string(dir), m)).collect();
+    let mut units: Vec<arch::Unit> = manifests
+        .iter()
+        .map(|(dir, m)| {
+            let mut u = arch::unit_from_manifest(&rel_string(dir), m);
+            // No description in package.json: the README's first sentences say what the package is for.
+            if u.description.is_none() {
+                u.description = ["README.md", "readme.md", "Readme.md"].iter().find_map(|f| read(&dir.join(f))).and_then(|t| arch::readme_summary(&t));
+            }
+            u
+        })
+        .collect();
     if units.is_empty() {
         let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "root".into());
         units.push(arch::Unit { dir: String::new(), name, deps: vec![], dev_deps: vec![], scripts: Default::default(), has_bin: false, ports: vec![], description: None });

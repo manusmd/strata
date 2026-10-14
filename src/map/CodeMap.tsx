@@ -151,8 +151,11 @@ function buildFlow(model: CodeModel, layout: Layout, expanded: Set<string>, proj
               position: { x: 10, y: 8 },
               width: 10,
               height: 10,
-              data: { text: it.dir.replace(/\/src$/, ""), meta: `${it.fileCount} files` },
+              // The last two folders say enough ("modules/bookings"); the full path is in the inspector.
+              data: { text: it.dir.replace(/\/src$/, "").split("/").slice(-2).join("/"), meta: `${it.fileCount} files` },
               className: "map-label-node",
+              // The label may be as wide as its folder, never wider: small folders don't spill over their neighbors.
+              style: { ["--gw" as any]: `${Math.max(40, gb.width - 20)}px` },
               draggable: false,
               selectable: false,
               zIndex: 1000,

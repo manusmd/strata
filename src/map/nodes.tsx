@@ -104,10 +104,13 @@ export type LabelNodeData = { text: string; meta: string; repo?: boolean; color?
 
 /** Screen-sized label for repos and folders in the far-out zoom levels. */
 export const LabelNode = memo(({ data }: NodeProps<Node<LabelNodeData>>) => (
-  <div className={`map-label ${data.repo ? "repo" : ""}`} style={data.color ? { ["--repo" as any]: data.color } : undefined}>
-    {data.repo && <span className="map-repo-dot" />}
-    <span className="map-label-text">{data.text}</span>
-    <span className="map-label-meta">{data.meta}</span>
+  // The room box is as wide as the folder (in screen pixels before scaling): too little room, no label.
+  <div className="map-label-room">
+    <div className={`map-label ${data.repo ? "repo" : ""}`} style={data.color ? { ["--repo" as any]: data.color } : undefined}>
+      {data.repo && <span className="map-repo-dot" />}
+      <span className="map-label-text">{data.text}</span>
+      <span className="map-label-meta">{data.meta}</span>
+    </div>
   </div>
 ));
 
