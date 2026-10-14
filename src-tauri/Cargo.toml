@@ -1,6 +1,6 @@
 [package]
 name = "strata"
-version = "0.3.4"
+version = "0.3.5"
 description = "A visual atlas for your codebase"
 authors = ["Manuel Schmid"]
 license = "MIT"
