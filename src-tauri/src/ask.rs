@@ -114,6 +114,10 @@ pub struct AskRequest {
     /// Continue an earlier conversation.
     pub session_id: Option<String>,
     pub model: Option<String>,
+    /// Run in Strata's own folder instead of the first repo. Claude Code keeps sessions per
+    /// working directory, so a chat whose repos can change (the plan chat) needs a fixed one.
+    #[serde(default)]
+    pub own_dir: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -142,9 +146,12 @@ fn relevant(v: &Value) -> bool {
 }
 
 /// The CLI invocation: read-only, streaming, confined to the project's repos.
-fn command(req: &AskRequest) -> Result<Command, String> {
+/// `home` is Strata's own empty folder: the working directory for the plan chat and for
+/// projects without repos (there is nothing to read, but Claude still needs somewhere to run).
+fn command(req: &AskRequest, home: &std::path::Path) -> Result<Command, String> {
     let claude = find_claude().ok_or("Claude Code isn't installed (no `claude` on PATH).")?;
-    let cwd = req.dirs.first().cloned().ok_or("This project has no repos to read.")?;
+    let own = req.own_dir || req.dirs.is_empty();
+    let cwd = if own { home.to_string_lossy().into_owned() } else { req.dirs[0].clone() };
     let restricted = supports_restricted(&claude);
     let mut cmd = Command::new(claude);
     cmd.current_dir(&cwd)
@@ -166,7 +173,7 @@ fn command(req: &AskRequest) -> Result<Command, String> {
         // Also confines the file tools to the working directories.
         cmd.arg("--restricted");
     }
-    for dir in req.dirs.iter().skip(1) {
+    for dir in req.dirs.iter().skip(if own { 0 } else { 1 }) {
         cmd.arg("--add-dir").arg(dir);
     }
     if let Some(s) = &req.session_id {
@@ -179,7 +186,9 @@ fn command(req: &AskRequest) -> Result<Command, String> {
 }
 
 pub fn start(app: AppHandle, req: AskRequest) -> Result<(), String> {
-    let mut cmd = command(&req)?;
+    let home = app.path().app_data_dir().map_err(|e| e.to_string())?.join("claude-home");
+    std::fs::create_dir_all(&home).map_err(|e| format!("Couldn't create {}: {e}", home.display()))?;
+    let mut cmd = command(&req, &home)?;
     let mut child = cmd.spawn().map_err(|e| format!("Couldn't start Claude Code: {e}"))?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
@@ -235,13 +244,34 @@ pub fn cancel(app: &AppHandle, ask_id: &str) {
 mod tests {
     use super::*;
 
-    /// Runs the real CLI (costs a few cents of the subscription): `cargo test ask:: -- --ignored --nocapture`
+    #[test]
+    fn plan_chat_and_repo_less_projects_run_in_strata_home() {
+        if find_claude().is_none() {
+            return; // needs the CLI on PATH to build a command
+        }
+        let home = std::path::Path::new("/tmp/strata-home");
+        let req = |dirs: Vec<&str>, own_dir| AskRequest { ask_id: "t".into(), question: "q".into(), context: "c".into(), dirs: dirs.into_iter().map(String::from).collect(), session_id: None, model: None, own_dir };
+        let added = |c: &Command| c.get_args().collect::<Vec<_>>().windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].to_string_lossy().into_owned()).collect::<Vec<_>>();
+
+        let none = command(&req(vec![], false), home).unwrap();
+        assert_eq!(none.get_current_dir(), Some(home), "no repos: Strata's folder, not an error");
+
+        let repos = command(&req(vec!["/r/api", "/r/web"], false), home).unwrap();
+        assert_eq!(repos.get_current_dir(), Some(std::path::Path::new("/r/api")));
+        assert_eq!(added(&repos), vec!["/r/web"]);
+
+        let plan = command(&req(vec!["/r/api", "/r/web"], true), home).unwrap();
+        assert_eq!(plan.get_current_dir(), Some(home), "the plan chat keeps one folder, so --resume works after repos are added");
+        assert_eq!(added(&plan), vec!["/r/api", "/r/web"]);
+    }
+
     #[test]
     fn versions() {
         assert!(parse_version("2.1.292 (Claude Code)") > parse_version("2.1.153 (Claude Code)"));
         assert!(parse_version("2.10.0") > parse_version("2.9.99"));
     }
 
+    /// Runs the real CLI (costs a few cents of the subscription): `cargo test ask:: -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn real_claude_answers_and_resumes() {
@@ -260,8 +290,9 @@ mod tests {
                 dirs: vec![a.to_string_lossy().into(), b.to_string_lossy().into()],
                 session_id: session,
                 model: Some("haiku".into()),
+                own_dir: false,
             };
-            let out = command(&req).unwrap().output().unwrap();
+            let out = command(&req, &root).unwrap().output().unwrap();
             if !out.status.success() || out.stdout.is_empty() {
                 println!("status: {:?}\nstderr: {}", out.status, String::from_utf8_lossy(&out.stderr));
             }

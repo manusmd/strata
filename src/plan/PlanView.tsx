@@ -124,7 +124,7 @@ export function PlanView({ project, graph, workspace, onOpen, onAddRepo }: Props
   const send = useCallback(
     (q: string) => {
       if (!p.chatId) return;
-      askStore.ask(chatKey(p.chatId), q, planContext(project, p.plan, p.version, graph, workspace), dirs, model || null);
+      askStore.ask(chatKey(p.chatId), q, planContext(project, p.plan, p.version, graph, workspace), dirs, model || null, true);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [p.chatId, p.plan, p.version, project, graph, workspace, model],

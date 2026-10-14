@@ -129,7 +129,8 @@ export const askStore = {
     return s;
   },
 
-  async ask(key: string, question: string, context: string, dirs: string[], model: string | null) {
+  /** `ownDir`: run in Strata's own folder (see AskRequest.own_dir), for chats whose repos can change. */
+  async ask(key: string, question: string, context: string, dirs: string[], model: string | null, ownDir = false) {
     ensureListening();
     const conv = state.conversations[key] ?? empty;
     if (conv.running) return;
@@ -139,7 +140,7 @@ export const askStore = {
     const chat = chatIdOf(key);
     if (chat) invoke("append_chat_message", { chatId: chat, role: "user", content: { text: question } }).catch(() => {});
     try {
-      await invoke("ask_start", { request: { askId, question, context, dirs, sessionId: conv.sessionId, model } });
+      await invoke("ask_start", { request: { askId, question, context, dirs, sessionId: conv.sessionId, model, ownDir } });
     } catch (e) {
       updateAnswer(askId, () => ({ done: true, error: String(e) }));
       update(key, (c) => ({ ...c, running: null }));
