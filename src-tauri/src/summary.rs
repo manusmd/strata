@@ -98,7 +98,7 @@ pub fn summarize(req: &SummaryRequest) -> Result<String, String> {
 }
 
 const ORGANIZE: &str = "You organize the parts of a software project into sections for a visual map called Strata. \
-Group items by domain or responsibility (what they are for), not by technology or folder name alone. \
+Group items the way the request asks; unless it says otherwise, group by domain or responsibility (what they are for), not by technology or folder name alone. \
 Give each section a short name (1–4 words) and a one-sentence description. Every item belongs to exactly one section. \
 The map is read from left to right, starting with what is closest to the user. Give each section a tier for its column: \
 0 = what users touch (frontends, web and mobile apps, clients, CLIs), 1 = the APIs and services they call, \

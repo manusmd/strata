@@ -4,6 +4,7 @@ import { buildArchModel, type WorkspacePackage } from "../map/archModel";
 import { buildDbModel } from "../map/dbModel";
 import { buildCodeModel } from "../map/model";
 import { summaryStore, useSummaries } from "../summary/store";
+import { ARCH_ROLE } from "../arch/roles";
 import { buildPlanRequest, parsePlan, planInput, type Plan, type SectionLens } from "./plan";
 
 /**
@@ -17,10 +18,10 @@ export function useSectionPlan(project: Project, lens: SectionLens | null, graph
     const models = lens === "arch" ? { arch: buildArchModel(graph, project.repos, workspace) } : lens === "db" ? { db: buildDbModel(graph, project.repos) } : { code: buildCodeModel(graph, project.repos) };
     const input = planInput(lens, project, graph, models, summaryStore.texts(project.id));
     if (input.items.length < 2) return null;
-    // Architecture components know their column; a section sits where its most user-facing member does.
+    // Architecture components know their role; sections follow it.
     const arch = models.arch;
-    const tierOf = arch ? (members: string[]) => Math.min(...members.map((id) => arch.byId.get(id)?.layer ?? 3)) : undefined;
-    return { ...buildPlanRequest(lens, project, input), tierOf };
+    const roleOf = arch ? (id: string) => ARCH_ROLE[arch.byId.get(id)?.kind ?? "External"] : undefined;
+    return { ...buildPlanRequest(lens, project, input), roleOf };
     // Summaries only refine the plan; don't re-plan whenever one arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, lens, graph, project.repos, project.name, workspace]);
@@ -36,7 +37,7 @@ export function useSectionPlan(project: Project, lens: SectionLens | null, graph
   const plan = useMemo<Plan | null>(() => {
     if (!request || !entry?.summary || entry.summary.hash !== request.hash) return null;
     try {
-      return parsePlan(entry.summary.text, request.tokens, request.tierOf);
+      return parsePlan(entry.summary.text, request.tokens, request.roleOf);
     } catch {
       return null;
     }

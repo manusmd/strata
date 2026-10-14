@@ -4,7 +4,8 @@ import { Background, BackgroundVariant, Handle, MarkerType, Position, ReactFlow,
 import "@xyflow/react/dist/base.css";
 import { fontsReady, MONO, textWidth } from "../map/measure";
 import { RoutedEdge, type Pt } from "../map/RoutedEdge";
-import { initials, KIND_COLOR, TYPE_STYLE, type Plan, type PlanComponent, type PlanType } from "./model";
+import { initials, KIND_COLOR, TYPE_STYLE, type Plan, type PlanComponent } from "./model";
+import { PLAN_ROLE, ROLES } from "../arch/roles";
 
 export type Badge = "NEW" | "CHANGED" | "REMOVED" | "BUILT" | "MISSING" | "UNPLANNED" | "DIFFERENT";
 const BADGE: Record<Badge, [string, string]> = {
@@ -19,8 +20,8 @@ const BADGE: Record<Badge, [string, string]> = {
 
 const W = 176, H = 62;
 const elk = new ELK();
-// Columns: what users touch, what serves it, where data lives, what's outside.
-const COLUMN: Record<PlanType, number> = { App: 0, Service: 1, Worker: 1, Library: 1, Queue: 2, Database: 2, External: 3 };
+// Columns follow the architectural roles: clients, APIs, workers, shared code, data, external services.
+const LANE_PAD = 16, LANE_HEAD = 30;
 
 type CardData = { c: PlanComponent; selected: boolean; dim: boolean; badge: Badge | null; glow: boolean };
 
@@ -51,7 +52,15 @@ const PlanCard = memo(({ data }: NodeProps<Node<CardData>>) => {
   );
 });
 
-const nodeTypes = { plan: PlanCard };
+/** A role's column (or row, top to bottom): a quiet frame with the role's name. */
+const Lane = memo(({ data }: NodeProps<Node<{ label: string; count: number }>>) => (
+  <div className="plan-lane">
+    <span>{data.label}</span>
+    <span className="faint">{data.count}</span>
+  </div>
+));
+
+const nodeTypes = { plan: PlanCard, lane: Lane };
 const edgeTypes = { routed: RoutedEdge };
 
 type Box = { x: number; y: number };
@@ -67,7 +76,7 @@ async function layout(plan: Plan, direction: "RIGHT" | "DOWN"): Promise<Laid> {
       "elk.direction": direction,
       "elk.partitioning.activate": "true",
       "elk.edgeRouting": "ORTHOGONAL",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "96",
       "elk.layered.spacing.edgeNodeBetweenLayers": "24",
       "elk.spacing.nodeNode": "36",
       "elk.spacing.edgeNode": "20",
@@ -76,9 +85,9 @@ async function layout(plan: Plan, direction: "RIGHT" | "DOWN"): Promise<Laid> {
       "elk.edgeLabels.placement": "CENTER",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.separateConnectedComponents": "false",
-      "elk.padding": "[top=30,left=30,bottom=30,right=30]",
+      "elk.padding": "[top=60,left=40,bottom=40,right=40]",
     },
-    children: plan.components.map((c) => ({ id: c.id, width: W, height: H, layoutOptions: { "elk.partitioning.partition": String(COLUMN[c.type]) } })),
+    children: plan.components.map((c) => ({ id: c.id, width: W, height: H, layoutOptions: { "elk.partitioning.partition": String(PLAN_ROLE[c.type]) } })),
     edges: plan.connections.map((e, i) => ({
       id: `e${i}`,
       sources: [e.from],
@@ -171,7 +180,27 @@ function Inner({ plan, selected = null, onSelect, badges, glow, focus, interacti
     if (!laid) return { nodes: [] as Node[], edges: [] as Edge[] };
     const related = new Set<string>();
     if (selected) for (const e of plan.connections) if (e.from === selected || e.to === selected) related.add(e.from === selected ? e.to : e.from);
-    const nodes: Node[] = plan.components.flatMap((c) => {
+    // One frame per role, spanning the whole canvas across the flow so the columns read as columns.
+    const placed = plan.components.filter((c) => laid.boxes.has(c.id));
+    const all = placed.map((c) => laid.boxes.get(c.id)!);
+    const across = direction === "RIGHT" ? [Math.min(...all.map((b) => b.y)), Math.max(...all.map((b) => b.y + H))] : [Math.min(...all.map((b) => b.x)), Math.max(...all.map((b) => b.x + W))];
+    const lanes: Node[] = [...new Set(placed.map((c) => PLAN_ROLE[c.type]))].map((role) => {
+      const bs = placed.filter((c) => PLAN_ROLE[c.type] === role).map((c) => laid.boxes.get(c.id)!);
+      const along = direction === "RIGHT" ? [Math.min(...bs.map((b) => b.x)), Math.max(...bs.map((b) => b.x + W))] : [Math.min(...bs.map((b) => b.y)), Math.max(...bs.map((b) => b.y + H))];
+      const [x0, x1, y0, y1] = direction === "RIGHT" ? [along[0], along[1], across[0], across[1]] : [across[0], across[1], along[0], along[1]];
+      return {
+        id: `lane:${role}`,
+        type: "lane",
+        position: { x: x0 - LANE_PAD, y: y0 - LANE_PAD - LANE_HEAD },
+        width: x1 - x0 + 2 * LANE_PAD,
+        height: y1 - y0 + 2 * LANE_PAD + LANE_HEAD,
+        draggable: false,
+        selectable: false,
+        zIndex: -1,
+        data: { label: ROLES[role], count: bs.length },
+      };
+    });
+    const nodes: Node[] = [...lanes, ...placed.flatMap((c) => {
       const b = laid.boxes.get(c.id);
       if (!b) return [];
       return [
@@ -185,7 +214,7 @@ function Inner({ plan, selected = null, onSelect, badges, glow, focus, interacti
           data: { c, selected: c.id === selected, dim: focus ? !focus.has(c.id) : !!selected && c.id !== selected && !related.has(c.id), badge: badges?.get(c.id) ?? null, glow: !!glow?.has(c.id) },
         },
       ];
-    });
+    })];
     const edges: Edge[] = plan.connections.flatMap((e, i) => {
       const r = laid.routes.get(`e${i}`);
       if (!r) return [];
@@ -206,7 +235,7 @@ function Inner({ plan, selected = null, onSelect, badges, glow, focus, interacti
       ];
     });
     return { nodes, edges };
-  }, [laid, plan, selected, badges, glow, focus]);
+  }, [laid, plan, selected, badges, glow, focus, direction]);
 
   return (
     <div ref={box} style={{ position: "absolute", inset: 0 }}>
@@ -224,7 +253,7 @@ function Inner({ plan, selected = null, onSelect, badges, glow, focus, interacti
         minZoom={0.1}
         maxZoom={2}
         onMove={(_, v) => setZoom(v.zoom)}
-        onNodeClick={(_, n) => onSelect?.(n.id)}
+        onNodeClick={(_, n) => onSelect?.(n.type === "plan" ? n.id : null)}
         onPaneClick={() => onSelect?.(null)}
         proOptions={{ hideAttribution: true }}
       >

@@ -1268,3 +1268,16 @@ h1.title { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; margin: 0
 .sb-nav-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; margin: 0 2px 0 3px; }
 .sb-nav-key { font-size: 11px; color: var(--text-3); opacity: 0; transition: opacity 0.15s; }
 .sb-nav-item:hover .sb-nav-key { opacity: 1; }
+
+/* Plan canvas: one quiet frame per architectural role */
+.plan-lane { width: 100%; height: 100%; box-sizing: border-box; border-radius: 14px; border: 1px dashed var(--line); background: var(--cluster, rgba(255, 255, 255, 0.02)); padding: 9px 14px; display: flex; gap: 8px; align-items: flex-start; font-size: 12px; font-weight: 600; color: var(--text-2); pointer-events: none; }
+
+/* Add repository dialog */
+.add-repo { width: min(480px, calc(100vw - 48px)); border-radius: 16px; padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 14px; animation: strataPop 0.25s ease-out; }
+.add-repo-option { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--card-border); background: var(--card); color: var(--text); cursor: pointer; font: inherit; }
+.add-repo-option:hover { border-color: var(--edge-strong); }
+.add-repo-icon { width: 32px; height: 32px; border-radius: 9px; background: var(--chip); display: grid; place-items: center; color: var(--text-2); flex: none; }
+.add-repo-or { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.add-repo-or::before, .add-repo-or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.add-repo-input { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 12.5px; outline: none; }
+.add-repo-input:focus { border-color: rgba(139, 92, 246, 0.6); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12); }

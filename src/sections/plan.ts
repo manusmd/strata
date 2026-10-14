@@ -4,9 +4,10 @@ import type { ArchModel } from "../map/archModel";
 import type { DbModel } from "../map/dbModel";
 import type { CodeModel } from "../map/model";
 import { hashOf } from "../summary/subjects";
+import { ARCH_ROLE, ROLES } from "../arch/roles";
 
 export type SectionLens = "code" | "arch" | "db";
-/** `tier` is the section's column, left to right: 0 user-facing clients, 1 APIs & services, 2 workers & shared code, 3 data, infra & external. */
+/** `tier` is the section's column, left to right: on the architecture map the role (see ROLES), elsewhere 0 user-facing … 3 data & infrastructure. */
 export type Section = { name: string; description: string; tier: number; members: string[] };
 /** A validated plan: every item in exactly one section. */
 export type Plan = { sections: Section[]; sectionOf: Map<string, number> };
@@ -21,7 +22,7 @@ export function planInput(lens: SectionLens, project: Project, _graph: Graph, mo
     const a = models.arch;
     const name = (id: string) => a.byId.get(id)?.name ?? id;
     return {
-      items: a.nodes.map((n) => ({ id: n.id, line: `${n.name} [${n.kind}] ${n.detail}${n.unit?.dir ? ` (${repoName(n.repoId)}/${n.unit.dir})` : ""}${about(n.id)}` })),
+      items: a.nodes.map((n) => ({ id: n.id, line: `${n.name} [${n.kind}; role: ${ROLES[ARCH_ROLE[n.kind]]}] ${n.detail}${n.unit?.dir ? ` (${repoName(n.repoId)}/${n.unit.dir})` : ""}${about(n.id)}` })),
       extra: ["Connections:", ...a.edges.slice(0, 120).map((e) => `${name(e.source)} → ${name(e.target)} (${e.kind})`)],
     };
   }
@@ -49,7 +50,7 @@ export function planInput(lens: SectionLens, project: Project, _graph: Graph, mo
 }
 
 const SECTION_HINT: Record<SectionLens, string> = {
-  arch: "Group these architecture components into 3–7 sections by domain or responsibility, e.g. \"Customer apps\" (tier 0), \"Checkout & payments\" (tier 1), \"Background jobs\" (tier 2), \"Data & infrastructure\" (tier 3). Keep frontends and clients out of backend sections so they can sit on the left.",
+  arch: `This is the architecture map: group the components by architectural role, not by business domain. Each item says its role; the roles, left to right, are: ${ROLES.join(", ")}. Never put components with different roles in one section. Usually make one section per role; split a role into 2–3 sections only when it has many components with clearly different jobs (e.g. "Customer apps" and "Admin tools" within Clients). Name each section after its role or a more specific name for what's in it, and say in the description what these parts do in this project and what they talk to.`,
   db: "Group these database tables into 3–10 sections by business domain, e.g. \"Members\", \"Billing\", \"Scheduling\", \"Auth\". Tier: 0 for what users see and edit directly (accounts, profiles, content), 1 for core business data, 2 for jobs, events and logs, 3 for system and reference tables.",
   code: "Group these source folders into 4–12 sections by feature area or responsibility across repos, e.g. \"Storefront\" (tier 0), \"Checkout\" (tier 1), \"Shared UI\" (tier 2), \"Build & tooling\" (tier 3). Folders of the same feature in different repos (frontend, backend, shared) belong together; give a feature the tier of its most user-facing part.",
 };
@@ -64,12 +65,15 @@ export function buildPlanRequest(lens: SectionLens, project: Project, input: { i
     ...tokens.map((t) => `${t.token}: ${t.line}`),
     ...(input.extra.length ? ["", ...input.extra] : []),
   ].join("\n");
-  // "tiers" invalidates plans stored before sections had a column.
-  return { prompt, tokens, hash: hashOf(lens, "tiers", ...input.items.map((i) => i.line)) };
+  // The marker invalidates plans stored under an older prompt ("roles": the architecture map groups by role).
+  return { prompt, tokens, hash: hashOf(lens, lens === "arch" ? "roles" : "tiers", ...input.items.map((i) => i.line)) };
 }
 
-/** Validates the model's JSON against the items it was given. `tierOf` measures a section's column from its members and wins over the model's guess. */
-export function parsePlan(json: string, tokens: { token: string; id: string }[], tierOf?: (members: string[]) => number): Plan {
+/**
+ * Validates the model's JSON against the items it was given. With `roleOf` (the architecture
+ * map), a section never mixes roles: mixed ones are split, and the role is the section's column.
+ */
+export function parsePlan(json: string, tokens: { token: string; id: string }[], roleOf?: (id: string) => number): Plan {
   const byToken = new Map(tokens.map((t) => [t.token, t.id]));
   const raw = JSON.parse(json);
   const seen = new Set<string>();
@@ -84,12 +88,22 @@ export function parsePlan(json: string, tokens: { token: string; id: string }[],
       }
     }
     if (!members.length) continue;
-    const t = Number(s?.tier);
-    const tier = tierOf ? tierOf(members) : Number.isInteger(t) && t >= 0 && t <= 3 ? t : 1;
-    found.push({ name: String(s?.name ?? "Section").slice(0, 40), description: String(s?.description ?? "").slice(0, 200), tier, members });
+    const name = String(s?.name ?? "Section").slice(0, 40);
+    const description = String(s?.description ?? "").slice(0, 200);
+    if (roleOf) {
+      const byRole = new Map<number, string[]>();
+      for (const m of members) byRole.set(roleOf(m), [...(byRole.get(roleOf(m)) ?? []), m]);
+      for (const [role, ms] of byRole) found.push({ name: byRole.size > 1 ? `${name} · ${ROLES[role]}` : name, description, tier: role, members: ms });
+    } else {
+      const t = Number(s?.tier);
+      found.push({ name, description, tier: Number.isInteger(t) && t >= 0 && t <= 3 ? t : 1, members });
+    }
   }
   const left = tokens.map((t) => t.id).filter((id) => !seen.has(id));
-  if (left.length) found.push({ name: "Other", description: "Items the AI didn't place in a section.", tier: tierOf?.(left) ?? 3, members: left });
+  if (left.length) {
+    if (roleOf) for (const role of [...new Set(left.map(roleOf))]) found.push({ name: ROLES[role], description: "Parts the AI didn't place in a section.", tier: role, members: left.filter((id) => roleOf(id) === role) });
+    else found.push({ name: "Other", description: "Items the AI didn't place in a section.", tier: 3, members: left });
+  }
   // Left to right: by tier, keeping the model's order within a tier.
   const sections = found.map((s, i) => ({ s, i })).sort((a, b) => a.s.tier - b.s.tier || a.i - b.i).map(({ s }) => s);
   const sectionOf = new Map<string, number>();

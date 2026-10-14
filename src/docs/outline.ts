@@ -1,6 +1,7 @@
 import type { Graph, GraphNode, Project } from "../api";
 import type { ArchEdge, ArchModel, ArchNode } from "../map/archModel";
 import type { DbModel, DbTable } from "../map/dbModel";
+import { ARCH_ROLE, ROLES } from "../arch/roles";
 
 /** Everything a docs page is built from: the scan, as the maps see it. */
 export type DocsCtx = {
@@ -33,14 +34,6 @@ export type PageDef = {
 
 export const GROUPS = ["Start here", "System", "Components", "Data model", "Flows", "Glossary"] as const;
 export type Group = (typeof GROUPS)[number];
-
-/** System pages follow the map's columns, read left to right. */
-const TIERS: [number, string][] = [
-  [0, "Apps & clients"],
-  [1, "Services & APIs"],
-  [2, "Shared code"],
-  [3, "Data & infrastructure"],
-];
 
 export const slug = (s: string) => s.toLowerCase().replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "page";
 
@@ -80,10 +73,11 @@ export function buildOutline(ctx: DocsCtx): PageDef[] {
   const { arch, db } = ctx;
   const pages: PageDef[] = [{ id: "start", kind: "start", group: "Start here", title: "Overview", mono: false }];
 
-  for (const [tier, title] of TIERS) {
-    const members = arch.nodes.filter((n) => shown(n) && n.layer === tier).map((n) => n.id);
-    if (members.length) pages.push({ id: `system:${tier}`, kind: "section", group: "System", title, mono: false, members });
-  }
+  // System pages follow the architectural roles, in the map's reading order.
+  ROLES.forEach((title, role) => {
+    const members = arch.nodes.filter((n) => shown(n) && ARCH_ROLE[n.kind] === role).map((n) => n.id);
+    if (members.length) pages.push({ id: `role:${role}`, kind: "section", group: "System", title, mono: false, members });
+  });
 
   for (const n of arch.nodes.filter((n) => n.unit).sort((a, b) => a.layer - b.layer || a.name.localeCompare(b.name)))
     pages.push({ id: `component:${n.id}`, kind: "component", group: "Components", title: n.name, mono: true, node: n.id });
