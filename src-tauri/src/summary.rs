@@ -67,7 +67,12 @@ impl Drop for Slot {
 }
 
 pub fn build_prompt(req: &SummaryRequest) -> String {
-    let mut prompt = format!("Summarize this item for the map.\n\n{}\n", req.prompt.trim());
+    with_files("Summarize this item for the map.", req)
+}
+
+/// The request's description plus the source of its files, within the size limits.
+fn with_files(lead: &str, req: &SummaryRequest) -> String {
+    let mut prompt = format!("{lead}\n\n{}\n", req.prompt.trim());
     let mut budget = TOTAL_LIMIT;
     for f in &req.files {
         if budget < 500 {
@@ -95,7 +100,11 @@ pub fn summarize(req: &SummaryRequest) -> Result<String, String> {
 const ORGANIZE: &str = "You organize the parts of a software project into sections for a visual map called Strata. \
 Group items by domain or responsibility (what they are for), not by technology or folder name alone. \
 Give each section a short name (1–4 words) and a one-sentence description. Every item belongs to exactly one section. \
-Reply with only JSON, no prose and no code fences: {\"sections\":[{\"name\":\"…\",\"description\":\"…\",\"members\":[\"id\",…]}]}";
+The map is read from left to right, starting with what is closest to the user. Give each section a tier for its column: \
+0 = what users touch (frontends, web and mobile apps, clients, CLIs), 1 = the APIs and services they call, \
+2 = background work and shared code (workers, jobs, queues, shared libraries), 3 = data, infrastructure and external services. \
+List the sections in that order, from tier 0 to tier 3. \
+Reply with only JSON, no prose and no code fences: {\"sections\":[{\"name\":\"…\",\"description\":\"…\",\"tier\":0,\"members\":[\"id\",…]}]}";
 
 /// Asks Claude for a sections plan (JSON text) for one lens of the map.
 pub fn organize(prompt: &str, model: &str) -> Result<String, String> {
@@ -103,6 +112,22 @@ pub fn organize(prompt: &str, model: &str) -> Result<String, String> {
     // Models sometimes wrap JSON in a fence anyway.
     let trimmed = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
     serde_json::from_str::<Value>(trimmed).map_err(|e| format!("Claude's plan wasn't valid JSON ({e})."))?;
+    Ok(trimmed.to_string())
+}
+
+const DOCS: &str = "You write one page of living documentation for a software project in Strata, a code map. \
+Strata decides the page's structure and shows the facts (connections, tables, env vars) itself; you write only the explanations around them. \
+Write for a developer who is new to the project: what this part is for, how it works, what to watch out for. Short paragraphs of 2–4 sentences, plain prose, no headings, no lists, no code blocks. \
+Refer to real things with link tokens: [[component:name]], [[file:repo/path/to/file.ts]], [[table:name]], [[symbol:name]]. \
+Only link names that appear in the provided context or code, spelled exactly as given; never invent files, tables or functions. \
+Only state what the context and code show; if something is unclear, leave it out. Write in English. \
+Reply with only the JSON the request asks for, no prose and no code fences.";
+
+/// Writes one docs page: JSON text in the shape the request describes.
+pub fn write_doc(req: &SummaryRequest) -> Result<String, String> {
+    let text = complete(DOCS, &with_files("Write this docs page.", req), &req.model)?;
+    let trimmed = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    serde_json::from_str::<Value>(trimmed).map_err(|e| format!("Claude's page wasn't valid JSON ({e})."))?;
     Ok(trimmed.to_string())
 }
 
@@ -218,5 +243,21 @@ i13: attendanceSession: id, teamId, date | refs team\ni14: team: id, organizatio
         let v: serde_json::Value = serde_json::from_str(&plan).unwrap();
         let members: Vec<String> = v["sections"].as_array().unwrap().iter().flat_map(|s| s["members"].as_array().unwrap().iter().map(|m| m.as_str().unwrap().to_string())).collect();
         assert!(members.len() >= 14, "almost every item placed: {members:?}");
+    }
+
+    /// Sections come with a tier and in reading order: clients first, data and infrastructure last.
+    #[test]
+    #[ignore]
+    fn real_plan_orders_sections_left_to_right() {
+        let prompt = "Project \"shop\". Group these source folders into 4–12 sections by feature area or responsibility across repos, e.g. \"Storefront\" (tier 0), \"Checkout\" (tier 1), \"Shared UI\" (tier 2), \"Build & tooling\" (tier 3). Folders of the same feature in different repos (frontend, backend, shared) belong together; give a feature the tier of its most user-facing part.\nUse the ids exactly as given (like i12).\n\nItems:\n\
+i1: db/migrations (14 files)\ni2: infra/terraform (9 files)\ni3: worker/src/jobs (6 files; exports sendReceipt, syncStock)\n\
+i4: api/src/orders (8 files; exports createOrder)\ni5: web/app/checkout (5 files; exports CheckoutPage)\ni6: web/app/products (7 files; exports ProductList)\n\
+i7: api/src/catalog (6 files; exports listProducts)\ni8: mobile/src/screens (12 files; exports HomeScreen, CartScreen)\ni9: packages/ui (20 files; exports Button, Card)\ni10: api/src/auth (4 files; exports login)";
+        let plan = super::organize(prompt, "haiku").unwrap();
+        println!("{plan}");
+        let v: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        let tiers: Vec<i64> = v["sections"].as_array().unwrap().iter().map(|s| s["tier"].as_i64().expect("every section has a tier")).collect();
+        assert!(tiers.windows(2).all(|w| w[0] <= w[1]), "sections listed left to right: {tiers:?}");
+        assert_eq!(tiers.first(), Some(&0));
     }
 }

@@ -20,6 +20,40 @@ const repo = (id: string, name: string, path: string, remote: string | null = nu
 const chats: { id: string; projectId: string; title: string; sessionId: string | null; createdAt: number; updatedAt: number }[] = [];
 const chatMessages: Record<string, { role: string; content: unknown; createdAt: number }[]> = {};
 
+// Docs pages per project (JSON strings, like the database).
+// Kept in localStorage so a reload keeps them, like the real database.
+const docPages: Record<string, Record<string, string>> = (() => {
+  try {
+    return JSON.parse(localStorage.getItem("strata-mock-docs") ?? "{}");
+  } catch {
+    return {};
+  }
+})();
+
+/** A docs page reply in the shape the prompt asks for, linking names that appear in the prompt. */
+function mockDocPage(prompt: string, files: { label: string }[]): string {
+  const comps = [...prompt.matchAll(/^(?:- |\d+\. )([\w@/.-]+) \[/gm)].map((m) => m[1]);
+  const own = prompt.match(/component "([^"]+)"/)?.[1];
+  const tables = [...prompt.matchAll(/Database table (\w+)/g)].map((m) => m[1]);
+  const tableList = (prompt.match(/^Tables: (.*)$/m)?.[1] ?? "").split(/\), /).map((t) => t.split(" (")[0].trim()).filter(Boolean);
+  const c = (i: number) => (comps[i] ? `[[component:${comps[i]}]]` : own ? `[[component:${own}]]` : "the app");
+  const f = (i: number) => (files[i] ? `[[file:${files[i].label}]]` : "its entry file");
+  const t = (i: number) => (tables[i] ?? tableList[i] ? `[[table:${tables[i] ?? tableList[i]}]]` : "the database");
+  if (prompt.includes('"terms"'))
+    return JSON.stringify({ terms: (tableList.length ? tableList : ["order", "customer", "invoice"]).slice(0, 8).map((n, i) => ({ term: n.replace(/^\w/, (x) => x.toUpperCase()), text: `A ${n} as the business sees it. It is stored in [[table:${n}]]${i % 2 ? ` and created through ${c(0)}` : ""}.` })) });
+  if (prompt.includes('"intro"')) {
+    const n = Number(prompt.match(/exactly (\d+) strings/)?.[1] ?? 3);
+    return JSON.stringify({ intro: `A request starts in ${c(0)} and travels through ${n - 1} more parts before the user sees a result.`, steps: Array.from({ length: n }, (_, i) => (i === 0 ? `The user acts in ${c(0)}, which sends the request from ${f(0)}.` : `${c(i)} handles the next part of the request${i === n - 1 ? " and the answer goes back the same way" : ""}.`)) });
+  }
+  const n = Number(prompt.match(/exactly (\d+) strings/)?.[1] ?? 2);
+  const texts = [
+    `${own ? `[[component:${own}]]` : c(0)} is where most of the work happens. It starts in ${f(0)} and talks to ${c(1)} for anything that needs data.`,
+    `Requests come in through ${f(1)}, are checked, and then read or write ${t(0)}. Keep handlers thin: the logic lives in the service files.`,
+    `When you change it, run its tests and check ${c(2)}, which depends on it. Environment variables are listed above.`,
+  ];
+  return JSON.stringify({ texts: Array.from({ length: n }, (_, i) => texts[i % texts.length]) });
+}
+
 // Plans: one planning chat and a list of versions per project.
 const planChats: Record<string, string> = {};
 const planVersions: Record<string, { version: number; title: string; changes: string; plan: unknown; source: string | null; createdAt: number }[]> = {};
@@ -244,6 +278,18 @@ export async function installDevMock() {
             resolve(text);
           }, 1200),
         );
+      case "doc_pages":
+        return Object.entries(docPages[a.projectId] ?? {}).map(([pageId, content]) => ({ pageId, content, updatedAt: now }));
+      case "save_doc_page":
+        docPages[a.projectId] = { ...(docPages[a.projectId] ?? {}), [a.pageId]: a.content };
+        try {
+          localStorage.setItem("strata-mock-docs", JSON.stringify(docPages));
+        } catch {}
+        return null;
+      case "write_doc_page":
+        return new Promise((resolve) => setTimeout(() => resolve(mockDocPage(a.request.prompt, a.request.files)), 900 + Math.random() * 900));
+      case "write_docs":
+        return a.files.length;
       case "plan_chat": {
         if (!planChats[a.projectId]) {
           const id = "plan-" + a.projectId;
@@ -308,11 +354,12 @@ export async function installDevMock() {
           setTimeout(() => {
             // Groups the items by a keyword in their description — enough to exercise the UI.
             const items = [...String(a.prompt).matchAll(/^(i\d+): (.*)$/gm)].map((m) => ({ id: m[1], text: m[2].toLowerCase() }));
-            const rules: [string, RegExp][] = [["Checkout & payments", /checkout|pay|pricing|stripe|cart|order/], ["Data", /db|repo|database|postgres|schema/], ["Apps & UI", /app|page|layout|component|button|web/], ["Background work", /queue|job|redis|mailer|worker/]];
-            const sections = rules.map(([name]) => ({ name, description: `Everything about ${name.toLowerCase()}.`, members: [] as string[] }));
-            const other = { name: "Platform", description: "Entry points and everything else.", members: [] as string[] };
+            // Deliberately not in reading order: the app sorts sections by tier.
+            const rules: [string, number, RegExp][] = [["Checkout & payments", 1, /checkout|pay|pricing|stripe|cart|order/], ["Data", 3, /db|repo|database|postgres|schema/], ["Apps & UI", 0, /app|page|layout|component|button|web/], ["Background work", 2, /queue|job|redis|mailer|worker/]];
+            const sections = rules.map(([name, tier]) => ({ name, description: `Everything about ${name.toLowerCase()}.`, tier, members: [] as string[] }));
+            const other = { name: "Platform", description: "Entry points and everything else.", tier: 1, members: [] as string[] };
             for (const it of items) {
-              const i = rules.findIndex(([, re]) => re.test(it.text));
+              const i = rules.findIndex(([, , re]) => re.test(it.text));
               (i >= 0 ? sections[i] : other).members.push(it.id);
             }
             const plan = JSON.stringify({ sections: [...sections, other].filter((x) => x.members.length) });

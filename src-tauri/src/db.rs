@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS plan_versions (
   PRIMARY KEY (project_id, version)
 );
 
+-- Docs lens: one row per generated page. The content is JSON owned by the UI (blocks, hash, sources).
+CREATE TABLE IF NOT EXISTS doc_pages (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  page_id     TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (project_id, page_id)
+);
+
 -- Packages a repo imports, and whether its package.json declares them.
 CREATE TABLE IF NOT EXISTS repo_packages (
   repo_id   TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
@@ -605,6 +614,30 @@ pub struct PlanVersion {
     pub created_at: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocPage {
+    pub page_id: String,
+    pub content: String,
+    pub updated_at: i64,
+}
+
+/// All generated docs pages of a project.
+pub fn doc_pages(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<DocPage>> {
+    let mut stmt = conn.prepare("SELECT page_id, content, updated_at FROM doc_pages WHERE project_id = ?1")?;
+    let rows = stmt.query_map([project_id], |r| Ok(DocPage { page_id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)? }))?.collect();
+    rows
+}
+
+pub fn save_doc_page(conn: &Connection, project_id: &str, page_id: &str, content: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO doc_pages (project_id, page_id, content, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(project_id, page_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
+        params![project_id, page_id, content, now()],
+    )?;
+    Ok(())
+}
+
 /// Versions of a project's plan, newest first (without the plan bodies).
 pub fn plan_versions(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<PlanVersion>> {
     let mut stmt = conn.prepare("SELECT version, title, changes, source, created_at FROM plan_versions WHERE project_id = ?1 ORDER BY version DESC")?;
@@ -820,6 +853,21 @@ mod tests {
         assert_eq!((s[0].hash.as_str(), s[0].text.as_str()), ("h2", "Second."));
         assert_eq!(clear_summaries(&conn, &p).unwrap(), 1);
         delete_project(&conn, &p).unwrap();
+    }
+
+    #[test]
+    fn doc_pages_upsert_and_cascade() {
+        let conn = mem();
+        let p = create_project(&conn, "P", "#fff").unwrap();
+        save_doc_page(&conn, &p, "start", "{\"v\":1}").unwrap();
+        save_doc_page(&conn, &p, "glossary", "{}").unwrap();
+        save_doc_page(&conn, &p, "start", "{\"v\":2}").unwrap();
+        let mut pages = doc_pages(&conn, &p).unwrap();
+        pages.sort_by(|a, b| a.page_id.cmp(&b.page_id));
+        assert_eq!(pages.len(), 2, "saving again replaces the page");
+        assert_eq!(pages[1].content, "{\"v\":2}");
+        delete_project(&conn, &p).unwrap();
+        assert!(doc_pages(&conn, &p).unwrap().is_empty(), "pages go with the project");
     }
 
     #[test]

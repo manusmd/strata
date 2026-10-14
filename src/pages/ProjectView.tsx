@@ -8,6 +8,7 @@ import type { WorkspacePackage } from "../map/archModel";
 import { AskPanel } from "../ask/AskPanel";
 import { ProjectHome } from "../home/ProjectHome";
 import { PlanView } from "../plan/PlanView";
+import { DocsView } from "../docs/DocsView";
 import { focusOn, type Focus } from "../map/focus";
 import { AiContext } from "../summary/SummarySection";
 import { summaryStore, useSummaries } from "../summary/store";
@@ -43,7 +44,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
 
   return (
     <>
-      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" || lens === "plan" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
+      <div className={levelsActive ? "" : "disabled-ui"} title={title} style={{ display: lens === "home" || lens === "plan" || lens === "docs" ? "none" : "flex", gap: 2, fontSize: 12.5, marginLeft: 6 }}>
         {LEVELS.map((l) => (
           <button key={l} className={`level-btn ${l === level ? "on" : ""}`} onClick={() => onLevel(l)}>
             {l}
@@ -65,7 +66,7 @@ export function ProjectToolbar({ project, lens, setLens, level, onLevel, onResca
           {isScanning(project) ? "Scanning…" : "↻ Rescan"}
         </button>
       )}
-      {ready && lens !== "home" && lens !== "plan" && (
+      {ready && lens !== "home" && lens !== "plan" && lens !== "docs" && (
         <button className={`btn small ask-toggle ${askOpen ? "on" : ""}`} onClick={onToggleAsk} title="Ask Strata (⌘J)">
           <span style={{ color: "var(--arch)" }}>✦</span> Ask Strata
         </button>
@@ -182,6 +183,13 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
     setLens(key);
   };
+  // Docs: the open page, and where to go back to after following a link out of it.
+  const [docsPage, setDocsPage] = useState("start");
+  const [docsReturn, setDocsReturn] = useState<{ pageId: string; label: string; lens: Lens } | null>(null);
+  useEffect(() => {
+    if (lens === "docs" || (docsReturn && lens !== docsReturn.lens)) setDocsReturn(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lens]);
   // Packages every repo in the workspace provides, to trace "missing" imports to a repo.
   const [workspace, setWorkspace] = useState<WorkspacePackage[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -329,6 +337,24 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
   if (error) return <div className="error-banner" style={{ margin: 20 }}>{error}</div>;
   if (!graph) return <div className="page dots" />;
 
+  if (lens === "docs")
+    return (
+      <DocsView
+        project={project}
+        graph={graph}
+        workspace={workspace}
+        pageId={docsPage}
+        onPage={setDocsPage}
+        onOpen={(chip, from) => {
+          if (!chip.target) return;
+          const kind = chip.kind === "table" ? "table" : chip.kind === "component" ? "node" : "file";
+          const key: Lens = kind === "file" ? "code" : kind === "table" ? "db" : "arch";
+          openRef({ kind, id: chip.target });
+          setDocsReturn({ pageId: from.id, label: from.title, lens: key });
+        }}
+      />
+    );
+
   const scanningNow = project.repos.filter((r) => r.scanStatus === "scanning");
   return (
     <AiContext.Provider value={{ project, enable: onEnableAi, openSettings: onOpenSettings }}>
@@ -391,6 +417,13 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
             </button>
           )}
         </div>
+      )}
+      {docsReturn && (
+        <button className="glass docs-back" onClick={() => setLens("docs")}>
+          <span className="faint">←</span>Back to Docs<span className="faint">·</span>
+          <span className="mono" style={{ fontSize: 12, color: "var(--violet-text)" }}>{docsReturn.label}</span>
+          <span className="faint" style={{ fontSize: 12, paddingLeft: 4 }}>opened from a link</span>
+        </button>
       )}
       {scanningNow.length > 0 && (
         <div className="glass scan-pill">

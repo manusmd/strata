@@ -196,6 +196,22 @@ async fn organize(app: AppHandle, project_id: String, lens: String, hash: String
 }
 
 #[tauri::command]
+fn doc_pages(db: State<Db>, project_id: String) -> CmdResult<Vec<db::DocPage>> {
+    db::doc_pages(&db.0.lock().unwrap(), &project_id).map_err(err)
+}
+
+#[tauri::command]
+fn save_doc_page(db: State<Db>, project_id: String, page_id: String, content: String) -> CmdResult<()> {
+    db::save_doc_page(&db.0.lock().unwrap(), &project_id, &page_id, &content).map_err(err)
+}
+
+/// Asks Claude for one docs page (JSON text); the UI merges and saves it.
+#[tauri::command]
+async fn write_doc_page(request: summary::SummaryRequest) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || summary::write_doc(&request)).await.map_err(err)?
+}
+
+#[tauri::command]
 fn docs_existing(dir: String, paths: Vec<String>) -> Vec<String> {
     docs::existing(&dir, &paths)
 }
@@ -336,6 +352,9 @@ pub fn run() {
             delete_chat,
             current_user,
             set_project_brief,
+            doc_pages,
+            save_doc_page,
+            write_doc_page,
             docs_existing,
             write_docs,
             draft_roadmap,
