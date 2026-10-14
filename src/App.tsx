@@ -159,7 +159,7 @@ export default function App() {
   const pick = (item: PaletteItem, query: string) => {
     setPaletteOpen(false);
     const projectId = route.page === "project" || route.page === "settings" ? route.id : null;
-    const lensNow = route.page === "project" ? route.lens : "code";
+    const lensNow = route.page === "project" ? route.lens : "arch";
     if (item.target && projectId) {
       if (route.page !== "project") setRoute({ page: "project", id: projectId, lens: item.target.lens });
       setJump((j) => ({ ...item.target!, n: (j?.n ?? 0) + 1 }));

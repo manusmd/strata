@@ -14,6 +14,8 @@ type Props = {
   onSelect: (s: Selection) => void;
   onOpenTable: (tableId: string) => void;
   onClose: () => void;
+  /** Opens the file panel (code preview, imports, open in editor). */
+  onOpenFile?: (fileId: string) => void;
 };
 
 const KIND_ICON: Record<string, string> = { function: "ƒ", class: "C", type: "T", const: "k" };
@@ -57,7 +59,7 @@ const absPath = (project: Project, repoId: string, rel: string) => {
   return repo ? (rel ? `${repo.path}/${rel}` : repo.path) : rel;
 };
 
-export function Inspector({ model, project, graph, sel, onSelect, onOpenTable, onClose }: Props) {
+export function Inspector({ model, project, graph, sel, onSelect, onOpenTable, onClose, onOpenFile }: Props) {
   const repoName = (id: string) => project.repos.find((r) => r.id === id)?.name ?? "repo";
   let body: React.ReactNode = null;
   let actions: React.ReactNode = null;
@@ -129,8 +131,8 @@ export function Inspector({ model, project, graph, sel, onSelect, onOpenTable, o
     );
     actions = (
       <>
-        <button className="btn accent grow-btn" onClick={() => openPath(abs).catch(() => {})}>
-          Open file
+        <button className="btn accent grow-btn" onClick={() => (onOpenFile ? onOpenFile(f.id) : openPath(abs).catch(() => {}))}>
+          {onOpenFile ? "Show code" : "Open file"}
         </button>
         <button className="btn" onClick={() => revealItemInDir(abs).catch(() => {})}>
           Reveal

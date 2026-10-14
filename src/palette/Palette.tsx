@@ -57,7 +57,7 @@ export function Palette({ projects, current, graph, workspace, onPick, onClose }
     const a: PaletteItem[] = [];
     if (current) {
       a.push(
-        { key: "go:code", kind: "action", title: "Go to Code view", subtitle: "Folders, files and imports", tag: "View", color: "var(--code)", action: "lens:code" },
+        { key: "go:docs", kind: "action", title: "Go to Docs", subtitle: "Living documentation of the project", tag: "View", color: "var(--text-2)", action: "lens:docs" },
         { key: "go:arch", kind: "action", title: "Go to Architecture view", subtitle: "Apps, services, data and external APIs", tag: "View", color: "var(--arch)", action: "lens:arch" },
         { key: "go:db", kind: "action", title: "Go to Database view", subtitle: "Tables and relations", tag: "View", color: "var(--db)", action: "lens:db" },
         { key: "rescan", kind: "action", title: "Rescan project", subtitle: `Scan all repos of ${current.name} again`, tag: "Action", color: "var(--text-3)", action: "rescan" },

@@ -15,6 +15,8 @@ type Props = {
   onClose: () => void;
   /** Shown under the header, e.g. what a chat canvas says about this component. */
   banner?: React.ReactNode;
+  /** Zooms into the component's code (its folders, files and the libraries in it). */
+  onDrill?: (id: string) => void;
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -28,7 +30,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const ENTRY = /^(main|index|server|app|cli|worker|entry)\.(m?[tj]sx?)$/;
 
-export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile, onOpenTable, onAddRepo, onClose, banner }: Props) {
+export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile, onOpenTable, onAddRepo, onClose, banner, onDrill }: Props) {
   const n = model.byId.get(id);
   if (!n) return null;
   const color = KIND_COLOR[n.kind];
@@ -209,6 +211,13 @@ export function ArchInspector({ model, project, graph, id, onSelect, onOpenFile,
         <SummarySection subject={() => archSubject(project, model, graph, id)} />
         {body}
       </div>
+      {!actions && n.unit && onDrill && (
+        <div className="insp-actions">
+          <button className="btn accent grow-btn" onClick={() => onDrill(n.id)}>
+            Look inside · {n.unit.files} files
+          </button>
+        </div>
+      )}
       {actions && <div className="insp-actions">{actions}</div>}
     </div>
   );

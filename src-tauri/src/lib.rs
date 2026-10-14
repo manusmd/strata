@@ -72,6 +72,39 @@ fn add_repo(db: State<Db>, project_id: String, path: String) -> CmdResult<String
     db::add_local_repo(&db.0.lock().unwrap(), &project_id, &path)
 }
 
+/// A file of a repo, for the file panel's preview. Only files inside the repo; large files are cut.
+#[tauri::command]
+fn read_source(db: State<Db>, repo_id: String, path: String) -> CmdResult<String> {
+    let root = PathBuf::from(db::repo_path(&db.0.lock().unwrap(), &repo_id).map_err(err)?);
+    let rel = std::path::Path::new(&path);
+    if rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return Err("Not a file of this repo.".into());
+    }
+    let bytes = std::fs::read(root.join(rel)).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    const MAX: usize = 400_000;
+    let cut = bytes.len() > MAX;
+    let mut text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX)]).into_owned();
+    if cut {
+        text.push_str("\n… (file truncated)");
+    }
+    Ok(text)
+}
+
+/// Opens a file in the user's editor through its URL scheme (vscode://, cursor://, zed://…).
+#[tauri::command]
+fn open_in_editor(editor: String, path: String, line: Option<u32>) -> CmdResult<()> {
+    let scheme = match editor.as_str() {
+        "vscode" | "cursor" | "windsurf" | "zed" => editor.as_str(),
+        _ => return Err(format!("Unknown editor {editor}")),
+    };
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err("Expected an absolute path.".into());
+    }
+    let url = format!("{scheme}://file{}{}", path, line.map(|l| format!(":{l}")).unwrap_or_default());
+    std::process::Command::new("open").arg(&url).spawn().map_err(|e| format!("Couldn't open {editor}: {e}"))?;
+    Ok(())
+}
+
 /// Adds a public GitHub repo: it shows up right away and is cloned and scanned in the background.
 #[tauri::command]
 fn add_github_repo(app: AppHandle, db: State<Db>, project_id: String, url: String) -> CmdResult<String> {
@@ -357,6 +390,8 @@ pub fn run() {
             create_project,
             update_project,
             delete_project,
+            read_source,
+            open_in_editor,
             add_github_repo,
             add_repo,
             remove_repo,

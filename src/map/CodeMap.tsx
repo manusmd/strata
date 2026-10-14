@@ -32,6 +32,7 @@ type Props = {
   onOpenTable: (tableId: string) => void;
   /** AI sections: group folders by feature area across repos. */
   plan?: Plan | null;
+  onOpenFile?: (fileId: string) => void;
 };
 
 /** Rebuilds the map's top level from AI sections: each section is a frame of folders from any repo. */
@@ -240,7 +241,7 @@ function buildFlow(model: CodeModel, layout: Layout, expanded: Set<string>, proj
   return { nodes, edges };
 }
 
-function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, onOpenTable, plan = null }: Props) {
+function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, onOpenTable, plan = null, onOpenFile }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
@@ -357,7 +358,7 @@ function CodeMapInner({ project, graph, onLevel, zoomRequest, focus: focusReq, o
         <span><i className="lg-line in" /> used by → selected</span>
         <span><i className="lg-line ghost" /> missing</span>
       </div>
-      {sel && <Inspector model={model} project={project} graph={graph} sel={sel} onSelect={setSel} onOpenTable={onOpenTable} onClose={() => setSel(null)} />}
+      {sel && <Inspector model={model} project={project} graph={graph} sel={sel} onSelect={setSel} onOpenTable={onOpenTable} onOpenFile={onOpenFile} onClose={() => setSel(null)} />}
     </div>
   );
 }

@@ -393,6 +393,11 @@ export async function installDevMock() {
         projects = projects.map((p) => (p.id === a.projectId && !p.repos.some((x) => x.id === r.id) ? { ...p, repos: [...p.repos, r] } : p));
         return r.id;
       }
+      case "read_source":
+        return `// ${a.path} (mock source)\nimport { db } from "../db";\n\nexport async function handle(req: Request) {\n  const user = await db.user.findUnique({ where: { id: req.userId } });\n  if (!user) throw new Error("not found");\n  return { ok: true, user };\n}\n`;
+      case "open_in_editor":
+        console.info("[mock] open in", a.editor, a.path, a.line);
+        return null;
       case "add_github_repo": {
         const m = String(a.url).match(/github\.com[/:]([\w.-]+)\/([\w-]+(?:\.(?!git\b)[\w-]+)*)/) ?? String(a.url).trim().match(/^([\w.-]+)\/([\w.-]+)$/);
         if (!m) throw new Error(`“${a.url}” doesn't look like a GitHub repo. Paste a link like https://github.com/owner/repo.`);

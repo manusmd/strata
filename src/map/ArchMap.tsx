@@ -8,9 +8,10 @@ import type { Highlight } from "./nodes";
 import { ArchInspector } from "./ArchInspector";
 import type { Layout } from "./layout";
 import { ZoomWatcher } from "./zoom";
-import type { Focus } from "./focus";
 import type { Plan } from "../sections/plan";
 import { ARCH_ROLE, ROLES } from "../arch/roles";
+import { CodeMap } from "./CodeMap";
+import { focusOn, type Focus } from "./focus";
 import { fontsReady, lineCount, MONO, SANS, textWidth } from "./measure";
 
 const NODE_W = 248;
@@ -164,29 +165,35 @@ type Props = {
   focus: Focus | null;
   /** AI sections: group components into domain frames. */
   plan?: Plan | null;
+  /** Opens the component a file belongs to, zoomed into its code, with the file selected. */
+  drillFile?: Focus | null;
 };
 
-function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan: aiPlan = null }: Props) {
+function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAddRepo, focus: focusReq, plan: aiPlan = null, drillFile = null }: Props) {
   const focus = focusReq?.id ?? null;
   const container = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
   const full = useMemo(() => buildArchModel(graph, project.repos, workspace), [graph, project.repos, workspace]);
-  // Containers by default (what runs and stores data); shared libraries are code inside them.
-  const codeKey = `strata-arch-code-${project.id}`;
-  const [showCode, setShowCode] = useState(() => {
-    try {
-      return localStorage.getItem(codeKey) === "1";
-    } catch {
-      return false;
+  // Containers only (what runs and stores data); a component's code is one step in: "Look inside".
+  const model = useMemo(() => containerView(full), [full]);
+  const [drill, setDrill] = useState<string | null>(null);
+  // A jump to something that isn't a container (a library from Docs, a file) opens its code.
+  useEffect(() => {
+    if (!focusReq) return;
+    const n = full.byId.get(focusReq.id);
+    if (n && !model.byId.has(n.id) && n.unit) setDrill(n.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq]);
+  useEffect(() => {
+    if (!drillFile) return;
+    const unit = full.fileUnit.get(drillFile.id);
+    if (unit) {
+      setDrill(unit);
+      setFileFocus(focusOn(drillFile.id));
     }
-  });
-  const toggleCode = (on: boolean) => {
-    setShowCode(on);
-    try {
-      localStorage.setItem(codeKey, on ? "1" : "0");
-    } catch {}
-  };
-  const model = useMemo(() => (showCode ? full : containerView(full)), [full, showCode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drillFile]);
+  const [fileFocus, setFileFocus] = useState<Focus | null>(null);
   // Boxes the AI plan doesn't know (the container view's merged "web APIs") join a section of their role.
   const plan = useMemo<Plan | null>(() => {
     if (!aiPlan) return null;
@@ -202,11 +209,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     }
     return { sections, sectionOf };
   }, [aiPlan, model]);
-  // A jump to a library (from Docs or Ask Strata) needs the shared code visible.
-  useEffect(() => {
-    if (focusReq && !showCode && full.byId.get(focusReq.id)?.kind === "Library") setShowCode(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusReq]);
+
   const [layout, setLayout] = useState<Layout | null>(null);
   const [sizes, setSizes] = useState<Map<string, Size>>(new Map());
   const [sel, setSel] = useState<string | null>(focus);
@@ -318,6 +321,39 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
     return c;
   }, [model]);
 
+  // One step in: the component's own code, on the code map.
+  const drilled = drill ? full.byId.get(drill) : undefined;
+  const scoped = useMemo(() => {
+    if (!drilled) return null;
+    const files = new Set([...full.fileUnit].filter(([, u]) => u === drilled.id).map(([f]) => f));
+    return {
+      graph: {
+        nodes: graph.nodes.filter((n) => files.has(n.id) || (n.kind === "symbol" && files.has(n.parentId ?? "")) || n.kind === "table"),
+        edges: graph.edges.filter((e) => files.has(e.src)),
+        packages: graph.packages.filter((p) => p.repoId === drilled.repoId),
+      },
+      project: { ...project, repos: project.repos.filter((r) => r.id === drilled.repoId) },
+    };
+  }, [drilled, full, graph, project]);
+  if (drilled && scoped)
+    return (
+      <div className="map" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="arch-drill-bar glass">
+          <button className="link-btn" onClick={() => setDrill(null)}>
+            ← {project.name}
+          </button>
+          <span className="faint">›</span>
+          <span className="mono" style={{ fontWeight: 600 }}>{drilled.name}</span>
+          <span className="faint" style={{ fontSize: 12 }}>
+            {drilled.kind} · {drilled.unit?.files ?? 0} files{drilled.parts?.length ? ` · incl. ${drilled.parts.length} packages` : ""}
+          </span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
+          <CodeMap project={scoped.project} graph={scoped.graph} onLevel={() => {}} zoomRequest={null} focus={fileFocus} onOpenTable={(id) => onOpenTable(id)} onOpenFile={onOpenFile} />
+        </div>
+      </div>
+    );
+
   return (
     <div ref={container} className="map" data-level="file">
       <ReactFlow
@@ -331,6 +367,8 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         elementsSelectable={false}
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, n) => setSel(n.id)}
+        onNodeDoubleClick={(_, n) => full.byId.get(n.id)?.unit && setDrill(n.id)}
+        zoomOnDoubleClick={false}
         onPaneClick={() => setSel(null)}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--dot)" />
@@ -338,14 +376,6 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <ZoomWatcher container={container} onLevel={() => {}} />
       </ReactFlow>
       {!layout && <div className="map-loading">Laying out the architecture…</div>}
-      <div className="arch-view-toggle glass">
-        <button className={showCode ? "" : "on"} onClick={() => toggleCode(false)} title="What runs and stores data: apps, services, workers, datastores and external systems">
-          Containers
-        </button>
-        <button className={showCode ? "on" : ""} onClick={() => toggleCode(true)} title="Also show the shared libraries inside them">
-          + Shared code
-        </button>
-      </div>
       <div className="map-legend">
         <span>
           {Object.entries(counts)
@@ -359,7 +389,7 @@ function ArchMapInner({ project, graph, workspace, onOpenFile, onOpenTable, onAd
         <span><i className="lg-boundary" /> {project.name}</span>
       </div>
       {sel && full.byId.has(sel) && (
-        <ArchInspector model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />
+        <ArchInspector onDrill={setDrill} model={full} project={project} graph={graph} id={sel} onSelect={setSel} onOpenFile={onOpenFile} onOpenTable={onOpenTable} onAddRepo={onAddRepo} onClose={() => setSel(null)} />
       )}
     </div>
   );

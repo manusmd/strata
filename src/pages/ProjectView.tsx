@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Graph, Project, Repo, ScanProgress, api, shortPath } from "../api";
 import { StrataLogo } from "../components/StrataLogo";
-import { CodeMap, type ZoomLevel } from "../map/CodeMap";
+import type { ZoomLevel } from "../map/CodeMap";
+import { FilePanel, useCodeModel } from "../files/FilePanel";
 import { DbMap } from "../map/DbMap";
 import { ArchMap } from "../map/ArchMap";
 import type { WorkspacePackage } from "../map/archModel";
@@ -142,7 +143,7 @@ type Props = {
   onOpenSettings: () => void;
 };
 
-export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, onLevel, zoomRequest, askOpen, onCloseAsk, onData, jump, askRequest, onEnableAi, onOpenSettings }: Props) {
+export function ProjectView({ project, allProjects, lens, setLens, progress, onAddFolder, onReuse, onAddRepoPath, onScan, askOpen, onCloseAsk, onData, jump, askRequest, onEnableAi, onOpenSettings }: Props) {
   const [graph, setGraph] = useState<Graph | null>(null);
   // Where to land when jumping between lenses (a file in Code, a table in Database).
   const [focus, setFocus] = useState<{ code: Focus | null; db: Focus | null; arch: Focus | null }>({ code: null, db: null, arch: null });
@@ -163,16 +164,25 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     } catch {}
     if (on && project.aiMode === "off") onEnableAi();
   };
-  const sectionLens = lens === "code" || lens === "arch" || lens === "db" ? lens : null;
+  const sectionLens = lens === "arch" || lens === "db" ? lens : null;
   const sectionsEnabled = !!sectionLens && !!sectionsOn[sectionLens] && project.aiMode !== "off";
 
   // The chat open on the Overview (null = the project overview itself).
   const [chatId, setChatId] = useState<string | null>(null);
+  // Files open in a panel over whatever page you're on; components and tables jump to their map.
+  const [fileOpen, setFileOpen] = useState<{ id: string; line?: number } | null>(null);
+  const [drillFile, setDrillFile] = useState<Focus | null>(null);
   const openRef = (ref: { kind: "file" | "table" | "node"; id: string }) => {
-    const key = ref.kind === "file" ? "code" : ref.kind === "table" ? "db" : "arch";
+    if (ref.kind === "file") return setFileOpen({ id: ref.id });
+    const key = ref.kind === "table" ? "db" : "arch";
     setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
     setLens(key);
   };
+  // The code map is part of Architecture now ("Look inside"); old links to it land there.
+  useEffect(() => {
+    if (lens === "code") setLens("arch");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lens]);
   // Docs: the open page, and where to go back to after following a link out of it.
   const [docsPage, setDocsPage] = useState("start");
   const [docsReturn, setDocsReturn] = useState<{ pageId: string; label: string; lens: Lens } | null>(null);
@@ -209,9 +219,21 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
   }, [pregen]);
   const pregenLeft = pregen.filter((p) => summaries[p.nodeId]?.pending).length;
   const sections = useSectionPlan(project, sectionLens, graph, workspace, sectionsEnabled);
+  const code = useCodeModel(graph, project);
 
   useEffect(() => {
     if (!jump) return;
+    if (jump.lens === "code") {
+      // A file opens in the panel; a folder opens its component's code.
+      const node = graph?.nodes.find((n) => n.id === jump.id);
+      if (node?.kind === "file") return setFileOpen({ id: node.id });
+      const repoId = jump.id.split(":")[0];
+      const dir = jump.id.slice(jump.id.indexOf(":") + 1).replace(/^cluster:|^dir:/, "");
+      const first = graph?.nodes.find((n) => n.kind === "file" && n.repoId === repoId && (n.path ?? "").startsWith(dir ? `${dir}/` : ""));
+      if (first) setDrillFile(focusOn(first.id));
+      setLens("arch");
+      return;
+    }
     setFocus((f) => ({ ...f, [jump.lens]: focusOn(jump.id) }));
     setLens(jump.lens);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,7 +266,32 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, scanKey]);
 
-  if (lens === "plan" || (planned && lens === "home")) return <PlanView project={project} graph={graph} workspace={workspace} onOpen={openRef} onAddRepo={onAddRepoPath} />;
+  const panel =
+    fileOpen && graph && code ? (
+      <AiContext.Provider value={{ project, enable: onEnableAi, openSettings: onOpenSettings }}>
+        <FilePanel
+          project={project}
+          graph={graph}
+          code={code}
+          fileId={fileOpen.id}
+          line={fileOpen.line}
+          onOpenFile={(id, line) => setFileOpen({ id, line })}
+          onOpenTable={(id) => {
+            setFileOpen(null);
+            setFocus((f) => ({ ...f, db: focusOn(id) }));
+            setLens("db");
+          }}
+          onShowInArchitecture={(id) => {
+            setFileOpen(null);
+            setDrillFile(focusOn(id));
+            setLens("arch");
+          }}
+          onClose={() => setFileOpen(null)}
+        />
+      </AiContext.Provider>
+    ) : null;
+
+  if (lens === "plan" || (planned && lens === "home")) return <>{panel}<PlanView project={project} graph={graph} workspace={workspace} onOpen={openRef} onAddRepo={onAddRepoPath} /></>;
 
   if (project.repos.length === 0) {
     const suggestions = reusable(project, allProjects);
@@ -290,6 +337,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
     return (
       <AiContext.Provider value={{ project, enable: onEnableAi, openSettings: onOpenSettings }}>
         <ProjectHome project={project} graph={graph} workspace={workspace} chatId={chatId} setChatId={setChatId} onOpen={openRef} />
+        {panel}
       </AiContext.Provider>
     );
   }
@@ -329,6 +377,8 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
 
   if (lens === "docs")
     return (
+      <>
+      {panel}
       <DocsView
         project={project}
         graph={graph}
@@ -338,11 +388,11 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
         onOpen={(chip, from) => {
           if (!chip.target) return;
           const kind = chip.kind === "table" ? "table" : chip.kind === "component" ? "node" : "file";
-          const key: Lens = kind === "file" ? "code" : kind === "table" ? "db" : "arch";
           openRef({ kind, id: chip.target });
-          setDocsReturn({ pageId: from.id, label: from.title, lens: key });
+          if (kind !== "file") setDocsReturn({ pageId: from.id, label: from.title, lens: kind === "table" ? "db" : "arch" });
         }}
       />
+      </>
     );
 
   const scanningNow = project.repos.filter((r) => r.scanStatus === "scanning");
@@ -355,10 +405,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           project={project}
           graph={graph}
           workspace={workspace}
-          onOpenFile={(id) => {
-            setFocus((f) => ({ ...f, code: id ? focusOn(id) : null }));
-            setLens("code");
-          }}
+          onOpenFile={(id) => id && setFileOpen({ id })}
           onOpenTable={(id) => {
             setFocus((f) => ({ ...f, db: id ? focusOn(id) : null }));
             setLens("db");
@@ -366,6 +413,7 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           onAddRepo={onAddRepoPath}
           focus={focus.arch}
           plan={sections.plan}
+          drillFile={drillFile}
         />
       ) : lens === "db" ? (
         <DbMap
@@ -373,37 +421,29 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
           graph={graph}
           focus={focus.db}
           plan={sections.plan}
-          onOpenFile={(id) => {
-            setFocus((f) => ({ ...f, code: id ? focusOn(id) : null }));
-            setLens("code");
-          }}
+          onOpenFile={(id) => id && setFileOpen({ id })}
         />
-      ) : (
-        <CodeMap
-          project={project}
-          graph={graph}
-          onLevel={onLevel}
-          zoomRequest={zoomRequest}
-          focus={focus.code}
-          plan={sections.plan}
-          onOpenTable={(id) => {
-            setFocus((f) => ({ ...f, db: id ? focusOn(id) : null }));
-            setLens("db");
-          }}
-        />
-      )}
+      ) : null}
       {sectionLens && (
         <div className="sections-toggle glass">
-          <button className={!sectionsOn[sectionLens] ? "on" : ""} onClick={() => toggleSections(sectionLens, false)}>
-            Structure
-          </button>
-          <button className={sectionsOn[sectionLens] ? "on" : ""} onClick={() => toggleSections(sectionLens, true)} title="Let Claude group this map into sections by domain">
-            <span className="ai-spark">✦</span> AI sections
-          </button>
-          {sectionsEnabled && sections.pending && <Organizing />}
-          {sectionsEnabled && sections.error && !sections.pending && (
-            <button className="sections-retry" title={sections.error} onClick={() => sections.retry()}>
-              Failed · retry
+          {sectionsOn[sectionLens] ? (
+            <>
+              <span className="sections-on">
+                <span className="ai-spark">✦</span> AI enriched
+              </span>
+              {sectionsEnabled && sections.pending && <Organizing />}
+              {sectionsEnabled && sections.error && !sections.pending && (
+                <button className="sections-retry" title={sections.error} onClick={() => sections.retry()}>
+                  Failed · retry
+                </button>
+              )}
+              <button onClick={() => toggleSections(sectionLens, false)} title="Back to the map as scanned, without AI">
+                Show original
+              </button>
+            </>
+          ) : (
+            <button onClick={() => toggleSections(sectionLens, true)} title="Let Claude group this map into named sections and describe them. You can always switch back to the original.">
+              <span className="ai-spark">✦</span> Enrich with AI
             </button>
           )}
         </div>
@@ -436,13 +476,10 @@ export function ProjectView({ project, allProjects, lens, setLens, progress, onA
             onCloseAsk();
             setLens("home");
           }}
-          onOpen={(ref) => {
-            const key = ref.kind === "file" ? "code" : ref.kind === "table" ? "db" : "arch";
-            setFocus((f) => ({ ...f, [key]: focusOn(ref.id) }));
-            setLens(key);
-          }}
+          onOpen={openRef}
         />
       )}
+      {panel}
       {pregenLeft > 0 && (
         <div className="glass scan-pill" style={{ top: "auto", bottom: 14, left: "50%" }}>
           <span className="ai-spark">✦</span> Writing summaries · {pregenLeft} left
